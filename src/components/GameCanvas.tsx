@@ -18,12 +18,10 @@ export default function GameCanvas() {
     ctx.save();
     ctx.translate(offset.x, offset.y);
 
-    // Draw grid
     state.grid.forEach(row => {
       row.forEach(cell => {
         const { screenX, screenY } = gridToScreen(cell.x, cell.y);
         
-        // Draw isometric tile
         ctx.beginPath();
         ctx.moveTo(screenX, screenY);
         ctx.lineTo(screenX + 32, screenY + 16);
@@ -41,7 +39,6 @@ export default function GameCanvas() {
         ctx.strokeStyle = '#1a202c';
         ctx.stroke();
         
-        // Draw simple building block
         if (cell.type !== 'empty' && cell.type !== 'road') {
           ctx.fillStyle = '#fff';
           ctx.fillText(cell.type.charAt(0).toUpperCase(), screenX - 4, screenY + 20);
@@ -81,7 +78,7 @@ export default function GameCanvas() {
           <button
             key={t}
             onClick={() => setState({ ...state, selectedTool: t })}
-            className={`px-4 py-2 rounded ${state.selectedTool === t ? 'bg-blue-600 text-white' : 'bg-gray-200'}`}
+            className={`px-4 py-2 rounded ${state.selectedTool === t ? 'bg-blue-600 text-white' : 'bg-gray-200 text-black'}`}
           >
             {t.charAt(0).toUpperCase() + t.slice(1)}
           </button>
@@ -97,4 +94,4 @@ export default function GameCanvas() {
       />
     </div>
   );
-      }
+}
