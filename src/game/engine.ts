@@ -22,13 +22,11 @@ export const createInitialState = (): GameState => {
   };
 };
 
-// Helper: Convert grid coordinates to screen (isometric)
 export const gridToScreen = (x: number, y: number) => ({
   screenX: (x - y) * (TILE_WIDTH / 2),
   screenY: (x + y) * (TILE_HEIGHT / 2),
 });
 
-// Helper: Convert screen to grid (inverse isometric)
 export const screenToGrid = (screenX: number, screenY: number, offsetX: number, offsetY: number) => {
   const adjustedX = screenX - offsetX;
   const adjustedY = screenY - offsetY;
