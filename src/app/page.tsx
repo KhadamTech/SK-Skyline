@@ -1,10 +1,22 @@
+
 import GameCanvas from '../components/GameCanvas';
 
 export default function Home() {
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center p-4">
-      <h1 className="text-4xl font-bold mb-8 text-white">SK Skyline</h1>
+    <main className="game-shell">
+      <header className="game-header">
+        <div className="brand">
+          <span className="brand-mark">SK</span>
+          <span>SK SKYLINE</span>
+        </div>
+        <span className="edition">CITY BUILDER</span>
+      </header>
+
       <GameCanvas />
+
+      <footer className="game-footer">
+        Build your city. Shape your skyline.
+      </footer>
     </main>
   );
 }
