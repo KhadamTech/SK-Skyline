@@ -33,12 +33,18 @@ jobs:
           java-version: '21'
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
+          accept-android-sdk-licenses: 'true'
+          log-accepted-android-sdk-licenses: 'false'
 
       - name: Install Android SDK 36
         run: |
-          yes | sdkmanager --licenses
-          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;36.0.0"
 
       - name: Install Node Dependencies
         run: npm install --no-audit --no-fund
@@ -49,7 +55,7 @@ jobs:
       - name: Verify Static Game Files
         run: |
           test -f out/index.html
-          echo "Next.js game export verified."
+          echo "SK Skyline game export verified."
 
       - name: Add Android Platform
         run: npx cap add android
@@ -64,6 +70,10 @@ jobs:
           import re
 
           path = Path("android/variables.gradle")
+
+          if not path.exists():
+              raise SystemExit("android/variables.gradle not found")
+
           content = path.read_text()
 
           versions = {
@@ -74,6 +84,7 @@ jobs:
 
           for key, value in versions.items():
               pattern = rf"(?m)^(\s*{key}\s*=\s*)\d+"
+
               content, count = re.subn(
                   pattern,
                   rf"\g<1>{value}",
@@ -87,7 +98,7 @@ jobs:
                   )
 
           path.write_text(content)
-          print(content)
+          print("Android SDK versions configured successfully.")
           PY
 
       - name: Build Android APK
