@@ -1,26 +1,113 @@
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  --foreground-rgb: 255, 255, 255;
-  --background-start-rgb: 17, 24, 39;
-  --background-end-rgb: 31, 41, 55;
-}
-
-body {
-  color: rgb(var(--foreground-rgb));
-  background: linear-gradient(
-      to bottom,
-      transparent,
-      rgb(var(--background-end-rgb))
-    )
-    rgb(var(--background-start-rgb));
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
+  color-scheme: dark;
+  --background: #0b1220;
+  --panel: #151f31;
+  --panel-light: #202d42;
+  --text: #f4f7fc;
+  --muted: #9aaac0;
+  --accent: #38bdf8;
 }
 
 * {
   box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
+  background: var(--background);
+  color: var(--text);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+body {
+  min-height: 100dvh;
+}
+
+button {
+  font: inherit;
+}
+
+.game-shell {
+  width: 100%;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 18px 8px;
+  background:
+    radial-gradient(ellipse at top, #1c3150 0%, transparent 55%),
+    var(--background);
+}
+
+.game-header {
+  width: 100%;
+  max-width: 1500px;
+  min-height: 58px;
+  margin: 0 auto 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: clamp(18px, 2.5vw, 28px);
+  font-weight: 900;
+  letter-spacing: 2px;
+}
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  color: #061321;
+  background: linear-gradient(135deg, #67e8f9, #38bdf8);
+  letter-spacing: -1px;
+}
+
+.edition {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2px;
+}
+
+.game-footer {
+  padding: 8px 0 2px;
+  color: var(--muted);
+  text-align: center;
+  font-size: 11px;
+}
+
+@media (orientation: portrait) {
+  .game-shell {
+    justify-content: center;
+  }
+
+  .game-header {
+    margin-bottom: 8px;
+  }
+}
+
+@media (max-width: 600px) {
+  .game-shell {
+    padding: 8px;
+  }
+
+  .edition {
+    font-size: 9px;
+  }
 }
