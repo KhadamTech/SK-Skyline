@@ -1,0 +1,105 @@
+
+name: SK Skyline Android Build
+
+on:
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build SK Skyline APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 36
+        run: |
+          yes | sdkmanager --licenses
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Install Node Dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build Next.js Game
+        run: npm run build
+
+      - name: Verify Static Game Files
+        run: |
+          test -f out/index.html
+          echo "Next.js game export verified."
+
+      - name: Add Android Platform
+        run: npx cap add android
+
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      - name: Configure Android SDK Versions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path("android/variables.gradle")
+          content = path.read_text()
+
+          versions = {
+              "minSdkVersion": 24,
+              "compileSdkVersion": 36,
+              "targetSdkVersion": 36
+          }
+
+          for key, value in versions.items():
+              pattern = rf"(?m)^(\s*{key}\s*=\s*)\d+"
+              content, count = re.subn(
+                  pattern,
+                  rf"\g<1>{value}",
+                  content,
+                  count=1
+              )
+
+              if count != 1:
+                  raise SystemExit(
+                      f"Could not configure {key} in variables.gradle"
+                  )
+
+          path.write_text(content)
+          print(content)
+          PY
+
+      - name: Build Android APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleDebug
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SK-Skyline-Android-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
