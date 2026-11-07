@@ -1,3 +1,4 @@
+
 {
   "name": "sk-skyline",
   "version": "1.0.0",
@@ -5,14 +6,20 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "android:add": "cap add android",
+    "android:sync": "cap sync android",
+    "android:open": "cap open android"
   },
   "dependencies": {
+    "@capacitor/android": "^8.0.0",
+    "@capacitor/core": "^8.0.0",
     "next": "14.2.3",
     "react": "^18",
     "react-dom": "^18"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.0.0",
     "typescript": "^5",
     "@types/node": "^20",
     "@types/react": "^18",
