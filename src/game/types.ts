@@ -1,4 +1,10 @@
-export type BuildingType = 'empty' | 'road' | 'residential' | 'commercial' | 'industrial';
+
+export type BuildingType =
+  | 'empty'
+  | 'road'
+  | 'residential'
+  | 'commercial'
+  | 'industrial';
 
 export interface Cell {
   type: BuildingType;
