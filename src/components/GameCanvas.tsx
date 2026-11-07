@@ -32,7 +32,7 @@ const WIDTH = 1280;
 const HEIGHT = 720;
 
 const OFFSET_X = 640;
-const OFFSET_Y = 60;
+const OFFSET_Y = 100;
 
 const tools: {
   id: BuildingType;
