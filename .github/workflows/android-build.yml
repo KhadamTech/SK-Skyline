@@ -17,28 +17,33 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1. Download repository
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      # 2. Configure Node.js
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
 
+      # 3. Configure Java
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
 
+      # 4. Configure Android SDK without obsolete tools package
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v4
+        uses: android-actions/setup-android@v3
         with:
           packages: 'platform-tools'
           accept-android-sdk-licenses: 'true'
           log-accepted-android-sdk-licenses: 'false'
 
+      # 5. Install required Android SDK packages
       - name: Install Android SDK 36
         run: |
           sdkmanager --install \
@@ -46,23 +51,33 @@ jobs:
             "platforms;android-36" \
             "build-tools;36.0.0"
 
+      # 6. Install project dependencies
       - name: Install Node Dependencies
         run: npm install --no-audit --no-fund
 
+      # 7. Build Next.js game
       - name: Build Next.js Game
         run: npm run build
 
+      # 8. Verify exported game
       - name: Verify Static Game Files
         run: |
-          test -f out/index.html
-          echo "SK Skyline game export verified."
+          if [ ! -f out/index.html ]; then
+            echo "ERROR: Next.js export failed."
+            exit 1
+          fi
 
+          echo "SK Skyline static game export verified."
+
+      # 9. Generate Android project
       - name: Add Android Platform
         run: npx cap add android
 
+      # 10. Sync Capacitor
       - name: Sync Capacitor
         run: npx cap sync android
 
+      # 11. Configure Android SDK versions
       - name: Configure Android SDK Versions
         run: |
           python3 - <<'PY'
@@ -72,7 +87,9 @@ jobs:
           path = Path("android/variables.gradle")
 
           if not path.exists():
-              raise SystemExit("android/variables.gradle not found")
+              raise SystemExit(
+                  "ERROR: android/variables.gradle not found."
+              )
 
           content = path.read_text()
 
@@ -94,19 +111,97 @@ jobs:
 
               if count != 1:
                   raise SystemExit(
-                      f"Could not configure {key} in variables.gradle"
+                      f"ERROR: Could not configure {key}."
                   )
 
           path.write_text(content)
-          print("Android SDK versions configured successfully.")
+
+          print("Minimum SDK: 24")
+          print("Compile SDK: 36")
+          print("Target SDK: 36")
           PY
 
+      # 12. Configure landscape orientation
+      - name: Set Android Landscape Orientation
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path(
+              "android/app/src/main/AndroidManifest.xml"
+          )
+
+          if not path.exists():
+              raise SystemExit(
+                  "ERROR: AndroidManifest.xml not found."
+              )
+
+          content = path.read_text()
+
+          pattern = (
+              r'<activity\b'
+              r'(?=[^>]*android:name="[^"]*MainActivity")'
+              r'[^>]*>'
+          )
+
+          match = re.search(pattern, content)
+
+          if not match:
+              raise SystemExit(
+                  "ERROR: MainActivity declaration not found."
+              )
+
+          activity = match.group(0)
+
+          if "android:screenOrientation=" in activity:
+              activity = re.sub(
+                  r'android:screenOrientation="[^"]*"',
+                  'android:screenOrientation="landscape"',
+                  activity
+              )
+          else:
+              activity = (
+                  activity[:-1]
+                  + ' android:screenOrientation="landscape">'
+              )
+
+          content = (
+              content[:match.start()]
+              + activity
+              + content[match.end():]
+          )
+
+          path.write_text(content)
+
+          print("Landscape orientation configured.")
+          PY
+
+      # 13. Build Android APK
       - name: Build Android APK
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon assembleDebug
 
+          ./gradlew \
+            --no-daemon \
+            --stacktrace \
+            assembleDebug
+
+      # 14. Verify APK
+      - name: Verify APK
+        run: |
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "ERROR: APK was not generated."
+            exit 1
+          fi
+
+          ls -lh "$APK"
+          echo "SK Skyline APK successfully generated."
+
+      # 15. Upload APK
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
