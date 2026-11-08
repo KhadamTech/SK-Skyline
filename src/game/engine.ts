@@ -12,10 +12,12 @@ export const createInitialState = (): GameState => {
     }
     grid.push(row);
   }
-  return { grid, money: 50000, population: 0, income: 0, selectedTool: 'road' };
+  return { 
+    grid, money: 50000, population: 0, income: 0, selectedTool: 'road',
+    selectedBuilding: null // Start with no panel open
+  };
 };
 
-// Calculates total population and income based on building levels
 export const calculateEconomy = (grid: Cell[][]) => {
   let pop = 0;
   let inc = 0;
@@ -24,13 +26,12 @@ export const calculateEconomy = (grid: Cell[][]) => {
       pop += cell.level === 1 ? 10 : cell.level === 2 ? 25 : 50;
       inc += cell.level * 15; 
     }
-    if (cell.type === 'commercial') {
-      inc += cell.level * 30;
-    }
+    if (cell.type === 'commercial') inc += cell.level * 30;
   }));
   return { pop, inc };
 };
 
+// ... (Keep placeBuilding exactly as it was)
 export const placeBuilding = (state: GameState, x: number, z: number, tool: BuildingType): GameState => {
   if (x < 0 || x >= GRID_SIZE || z < 0 || z >= GRID_SIZE) return state;
   
@@ -43,13 +44,14 @@ export const placeBuilding = (state: GameState, x: number, z: number, tool: Buil
   if (state.money < costs[tool]) return state;
 
   cell.type = tool;
-  cell.level = 1; // All new buildings start at level 1
+  cell.level = 1;
 
   const { pop, inc } = calculateEconomy(newGrid);
 
   return { ...state, grid: newGrid, money: state.money - costs[tool], population: pop, income: inc };
 };
 
+// ... (Keep upgradeBuilding exactly as it was)
 export const upgradeBuilding = (state: GameState, x: number, z: number): GameState => {
   const cell = state.grid[z][x];
   if (cell.type === 'empty' || cell.type === 'road' || cell.level >= 3) return state;
