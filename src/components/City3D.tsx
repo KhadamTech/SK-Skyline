@@ -17,10 +17,10 @@ export default function City3D() {
   const meshesRef = useRef<Map<string, THREE.Group>>(new Map());
   const modelCache = useRef<Map<string, THREE.Object3D>>(new Map());
 
-  // 1. Load your GLB Models
+  // 1. Load 3D GLB Models
   useEffect(() => {
     const loader = new GLTFLoader();
-    // These match the files you uploaded to /public/models/
+    // MAKE SURE THESE MATCH YOUR GITHUB FILES
     const models = ['house-1', 'house-2', 'house-3', 'road', 'car']; 
     let loadedCount = 0;
 
@@ -29,11 +29,10 @@ export default function City3D() {
         modelCache.current.set(name, gltf.scene);
         loadedCount++;
         if (loadedCount === models.length) setLoading(false);
-      }, undefined, (err) => {
-        console.warn(`Could not load ${name}.glb, using fallback box.`);
-        // Fallback boxes if models are missing
-        const geo = new THREE.BoxGeometry(TILE_SIZE * 0.8, name === 'house-1' ? 3 : name === 'house-2' ? 6 : 10, TILE_SIZE * 0.8);
-        const mat = new THREE.MeshStandardMaterial({ color: name.includes('house') ? 0x4ade80 : name === 'road' ? 0x333333 : 0xff0000 });
+      }, undefined, () => {
+        // Fallback boxes
+        const geo = new THREE.BoxGeometry(TILE_SIZE * 0.8, name.includes('house') ? 3 * parseInt(name.split('-')[1]) : 1, TILE_SIZE * 0.8);
+        const mat = new THREE.MeshStandardMaterial({ color: name.includes('house') ? 0x4ade80 : 0x333333 });
         modelCache.current.set(name, new THREE.Mesh(geo, mat));
         loadedCount++;
         if (loadedCount === models.length) setLoading(false);
@@ -41,7 +40,7 @@ export default function City3D() {
     });
   }, []);
 
-  // 2. Scene Setup
+  // 2. Scene Setup & Raycasting
   useEffect(() => {
     if (!mountRef.current) return;
     const scene = sceneRef.current;
@@ -49,35 +48,29 @@ export default function City3D() {
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     
     renderer.setSize(mountRef.current.clientWidth, mountRef.current.clientHeight);
-    renderer.setPixelRatio(window.devicePixelRatio);
     renderer.shadowMap.enabled = true;
     mountRef.current.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
-    // Lights
     scene.add(new THREE.AmbientLight(0xffffff, 0.7));
     const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
     dirLight.position.set(20, 40, 20);
-    dirLight.castShadow = true;
     scene.add(dirLight);
 
-    // Camera Controls (Zoom/Pan)
     camera.position.set(20, 30, 30);
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.maxPolarAngle = Math.PI / 2.2;
 
-    // Ground Grid
     scene.add(new THREE.GridHelper(GRID_SIZE * TILE_SIZE, GRID_SIZE, 0x888888, 0x444444));
 
-    // Invisible Raycast Plane
+    // Ground for Raycasting
     const groundGeo = new THREE.PlaneGeometry(GRID_SIZE * TILE_SIZE, GRID_SIZE * TILE_SIZE);
     const ground = new THREE.Mesh(groundGeo, new THREE.MeshBasicMaterial({ visible: false }));
     ground.rotation.x = -Math.PI / 2;
     ground.userData.isGround = true;
     scene.add(ground);
 
-    // Click Raycaster
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
 
@@ -91,19 +84,22 @@ export default function City3D() {
       const intersects = raycaster.intersectObjects(scene.children, true);
       
       for (const intersect of intersects) {
-        // If we clicked a building, UPGRADE it
+        // OPEN DETAILS PANEL IF BUILDING CLICKED
         if (intersect.object.userData.isBuilding) {
           const gx = intersect.object.userData.gridX;
           const gz = intersect.object.userData.gridZ;
-          setState(prev => upgradeBuilding(prev, gx, gz));
+          setState(prev => ({ ...prev, selectedBuilding: { x: gx, z: gz } }));
           return;
         }
-        // If we clicked the ground, PLACE a building
+        // PLACE BUILDING IF GROUND CLICKED (and close panel)
         if (intersect.object.userData.isGround) {
           const p = intersect.point;
           const gx = Math.floor(p.x / TILE_SIZE + GRID_SIZE / 2);
           const gz = Math.floor(p.z / TILE_SIZE + GRID_SIZE / 2);
-          setState(prev => placeBuilding(prev, gx, gz, prev.selectedTool));
+          setState(prev => ({ 
+            ...placeBuilding(prev, gx, gz, prev.selectedTool), 
+            selectedBuilding: null // Close panel when placing new
+          }));
           return;
         }
       }
@@ -111,7 +107,6 @@ export default function City3D() {
 
     renderer.domElement.addEventListener('pointerdown', onClick);
 
-    // Animation Loop
     let reqId: number;
     const animate = () => {
       reqId = requestAnimationFrame(animate);
@@ -120,28 +115,17 @@ export default function City3D() {
     };
     animate();
 
-    const handleResize = () => {
-      if (!mountRef.current) return;
-      camera.aspect = mountRef.current.clientWidth / mountRef.current.clientHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(mountRef.current.clientWidth, mountRef.current.clientHeight);
-    };
-    window.addEventListener('resize', handleResize);
-
     return () => {
-      window.removeEventListener('resize', handleResize);
       renderer.domElement.removeEventListener('pointerdown', onClick);
       cancelAnimationFrame(reqId);
       renderer.dispose();
       mountRef.current?.removeChild(renderer.domElement);
     };
-  }, []); // Run once
+  }, []);
 
-  // 3. Render Grid (Updates when state changes)
+  // 3. Render Grid
   useEffect(() => {
     const scene = sceneRef.current;
-    
-    // Clear old meshes
     meshesRef.current.forEach(mesh => scene.remove(mesh));
     meshesRef.current.clear();
 
@@ -152,60 +136,105 @@ export default function City3D() {
           const group = new THREE.Group();
           
           let modelName = 'road';
-          if (cell.type === 'residential') modelName = `house-${cell.level}`; // Selects house-1, house-2, or house-3
+          if (cell.type === 'residential') modelName = `house-${cell.level}`; 
           
           const template = modelCache.current.get(modelName) || modelCache.current.get('house-1');
-          
-          if (template) {
-            const mesh = template.clone();
-            group.add(mesh);
-          }
+          if (template) group.add(template.clone());
 
-          // Position on grid
           group.position.set(
             (cell.x - GRID_SIZE / 2) * TILE_SIZE + TILE_SIZE / 2,
             0,
             (cell.z - GRID_SIZE / 2) * TILE_SIZE + TILE_SIZE / 2
           );
           
-          // Tag for Raycasting
           group.userData = { isBuilding: cell.type !== 'road', gridX: cell.x, gridZ: cell.z };
-          group.traverse(child => { if (child instanceof THREE.Mesh) child.castShadow = true; });
-
           scene.add(group);
           meshesRef.current.set(key, group);
         }
       });
     });
-  }, [state.grid]); // Triggers whenever you place or upgrade a building
+  }, [state.grid]);
+
+  // Get selected building data for the UI panel
+  const selectedCell = state.selectedBuilding 
+    ? state.grid[state.selectedBuilding.z][state.selectedBuilding.x] 
+    : null;
 
   return (
-    <div className="relative w-full h-screen bg-[#1e293b]">
-      {loading && <div className="absolute inset-0 flex items-center justify-center text-white z-50">Loading 3D Models...</div>}
+    <div className="relative w-full h-screen bg-[#1e293b] overflow-hidden">
+      {loading && <div className="absolute inset-0 flex items-center justify-center text-white z-50">Loading...</div>}
       
-      {/* Menu */}
+      {/* Top Toolbar */}
       <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 flex gap-2 p-2 bg-gray-900/90 rounded-xl border border-gray-700 shadow-2xl">
         <div className="flex gap-4 px-4 items-center border-r border-gray-700 text-white font-mono text-sm">
           <span className="text-green-400">💰 ${state.money}</span>
           <span className="text-blue-400">👥 {state.population}</span>
-          <span className="text-yellow-400">📈 +${state.income}/d</span>
         </div>
         <div className="flex gap-1">
           {(['road', 'residential', 'commercial', 'industrial'] as BuildingType[]).map(t => (
             <button
               key={t}
-              onClick={() => setState({ ...state, selectedTool: t })}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+              onClick={() => setState({ ...state, selectedTool: t, selectedBuilding: null })}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold ${
                 state.selectedTool === t ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400'
               }`}
             >
-              {t === 'road' ? '🛣️ Road' : t === 'residential' ? '🏠 Homes' : t === 'commercial' ? '🏪 Shops' : '🏭 Industry'}
+              {t.toUpperCase()}
             </button>
           ))}
         </div>
       </div>
 
+      {/* DETAILS PANEL (Slides in from right) */}
+      {selectedCell && selectedCell.type !== 'empty' && (
+        <div className="absolute top-20 right-4 w-72 bg-gray-900/95 backdrop-blur-md rounded-xl border border-gray-700 shadow-2xl z-20 text-white p-4">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-lg font-bold capitalize">{selectedCell.type} Details</h2>
+            <button onClick={() => setState({ ...state, selectedBuilding: null })} className="text-gray-400 hover:text-white">✖</button>
+          </div>
+
+          {/* Show the PNG Image from your GitHub /public/ui/ folder */}
+          <div className="w-full h-32 bg-gray-800 rounded-lg flex items-center justify-center mb-4 overflow-hidden">
+            <img 
+              src={`/ui/building-${selectedCell.level === 1 ? 'a' : selectedCell.level === 2 ? 'b' : 'skyscraper-a'}.png`} 
+              alt="Building" 
+              className="h-full object-contain"
+              onError={(e) => { e.currentTarget.style.display = 'none'; }} // Hides if image not found
+            />
+          </div>
+
+          <div className="space-y-2 text-sm mb-6">
+            <div className="flex justify-between border-b border-gray-700 pb-1">
+              <span className="text-gray-400">Level:</span>
+              <span className="font-bold text-yellow-400">{selectedCell.level} / 3</span>
+            </div>
+            <div className="flex justify-between border-b border-gray-700 pb-1">
+              <span className="text-gray-400">Population:</span>
+              <span className="font-bold">{selectedCell.level === 1 ? 10 : selectedCell.level === 2 ? 25 : 50}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-400">Income:</span>
+              <span className="font-bold text-green-400">+${selectedCell.level * 15}/day</span>
+            </div>
+          </div>
+
+          <button 
+            onClick={() => {
+              setState(prev => upgradeBuilding(prev, selectedCell.x, selectedCell.z));
+            }}
+            disabled={selectedCell.level >= 3 || state.money < selectedCell.level * 500}
+            className={`w-full py-2 rounded-lg font-bold ${
+              selectedCell.level >= 3 
+                ? 'bg-gray-700 text-gray-500 cursor-not-allowed' 
+                : 'bg-blue-600 hover:bg-blue-500 text-white'
+            }`}
+          >
+            {selectedCell.level >= 3 ? 'Max Level' : `Upgrade ($${selectedCell.level * 500})`}
+          </button>
+        </div>
+      )}
+
       <div ref={mountRef} className="w-full h-full" />
     </div>
   );
-        }
+                                   }
