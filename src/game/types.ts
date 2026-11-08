@@ -4,7 +4,7 @@ export type BuildingType = 'empty' | 'road' | 'residential' | 'commercial' | 'in
 
 export interface Cell {
   type: BuildingType;
-  level: number; // 1, 2, or 3
+  level: number;
   x: number;
   z: number;
 }
@@ -15,14 +15,6 @@ export interface GameState {
   population: number;
   income: number;
   selectedTool: BuildingType;
-}
-
-export interface Vehicle {
-  x: number;
-  z: number;
-  targetX: number;
-  targetZ: number;
-  progress: number;
-  speed: number;
-  mesh?: THREE.Object3D;
+  // NEW: Tracks which building UI is currently open
+  selectedBuilding: { x: number, z: number } | null; 
 }
