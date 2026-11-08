@@ -15,6 +15,15 @@ export interface GameState {
   population: number;
   income: number;
   selectedTool: BuildingType;
-  // NEW: Tracks which building UI is currently open
   selectedBuilding: { x: number, z: number } | null; 
+}
+
+export interface Vehicle {
+  x: number;
+  z: number;
+  targetX: number;
+  targetZ: number;
+  progress: number;
+  speed: number;
+  mesh?: THREE.Object3D;
 }
