@@ -2,7 +2,7 @@ import { Cell, GameState, BuildingType } from './types';
 
 export const GRID_SIZE = 20;
 export const TILE_SIZE = 4;
-export const MAX_BUILDING_LEVEL = 10;
+export const MAX_BUILDING_LEVEL = 3;
 
 export const createInitialState = (): GameState => {
   const grid: Cell[][] = [];
@@ -37,9 +37,7 @@ export const calculateEconomy = (grid: Cell[][]) => {
   return { pop, inc };
 };
 
-export const getUpgradeCost = (level: number) => {
-  return level * 500;
-};
+export const getUpgradeCost = (level: number) => level * 500;
 
 export const getDailyIncome = (cell: Cell) => {
   if (cell.type === 'residential') return cell.level * 15;
