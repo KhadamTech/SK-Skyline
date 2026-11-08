@@ -8,7 +8,7 @@ import {
   collectDailyIncome, getDailyIncome, getUpgradeCost,
   GRID_SIZE, TILE_SIZE, MAX_BUILDING_LEVEL 
 } from '../game/engine';
-import { GameState, BuildingType } from '../game/types';
+import { GameState, BuildingType, Vehicle } from '../game/types';
 
 export default function GameCanvas() {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -20,28 +20,39 @@ export default function GameCanvas() {
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const meshesRef = useRef<Map<string, THREE.Group>>(new Map());
   const modelCache = useRef<Map<string, THREE.Object3D>>(new Map());
+  const vehiclesRef = useRef<Vehicle[]>([]);
 
+  // 1. Load 3D Models from your specific folders
   useEffect(() => {
     const loader = new GLTFLoader();
-    const models = ['house-1', 'house-2', 'house-3', 'road', 'car']; 
-    let loadedCount = 0;
+    const modelsToLoad = {
+      'house-1': '/models/buildings/building-a.glb',
+      'house-2': '/models/buildings/building-b.glb',
+      'house-3': '/models/buildings/skyscraper-a.glb',
+      'road': '/models/roads/road-crossroad.glb',
+      'car': '/models/cars/sedan.glb'
+    };
 
-    models.forEach(name => {
-      loader.load(`/models/${name}.glb`, (gltf) => {
-        modelCache.current.set(name, gltf.scene);
+    let loadedCount = 0;
+    const totalModels = Object.keys(modelsToLoad).length;
+
+    Object.entries(modelsToLoad).forEach(([key, path]) => {
+      loader.load(path, (gltf) => {
+        modelCache.current.set(key, gltf.scene);
         loadedCount++;
-        if (loadedCount === models.length) setLoading(false);
-      }, undefined, () => {
-        // Fallback boxes if models aren't found
-        const geo = new THREE.BoxGeometry(TILE_SIZE * 0.8, name.includes('house') ? 3 * (parseInt(name.split('-')[1]) || 1) : 1, TILE_SIZE * 0.8);
-        const mat = new THREE.MeshStandardMaterial({ color: name.includes('house') ? 0x4ade80 : name === 'road' ? 0x333333 : 0xff0000 });
-        modelCache.current.set(name, new THREE.Mesh(geo, mat));
+        if (loadedCount === totalModels) setLoading(false);
+      }, undefined, (err) => {
+        console.warn(`Could not load ${path}. Using fallback.`);
+        const geo = new THREE.BoxGeometry(TILE_SIZE * 0.8, key.includes('house') ? 4 : 1, TILE_SIZE * 0.8);
+        const mat = new THREE.MeshStandardMaterial({ color: key.includes('house') ? 0x4ade80 : key === 'road' ? 0x333333 : 0xff0000 });
+        modelCache.current.set(key, new THREE.Mesh(geo, mat));
         loadedCount++;
-        if (loadedCount === models.length) setLoading(false);
+        if (loadedCount === totalModels) setLoading(false);
       });
     });
   }, []);
 
+  // 2. Scene Setup & Raycasting
   useEffect(() => {
     if (!mountRef.current) return;
     const scene = sceneRef.current;
@@ -56,6 +67,7 @@ export default function GameCanvas() {
     scene.add(new THREE.AmbientLight(0xffffff, 0.7));
     const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
     dirLight.position.set(20, 40, 20);
+    dirLight.castShadow = true;
     scene.add(dirLight);
 
     camera.position.set(20, 30, 30);
@@ -109,6 +121,38 @@ export default function GameCanvas() {
     const animate = () => {
       reqId = requestAnimationFrame(animate);
       controls.update();
+      
+      // Update vehicles
+      vehiclesRef.current.forEach(v => {
+        v.progress += v.speed;
+        if (v.progress >= 1) {
+          v.progress = 0;
+          v.x = v.targetX;
+          v.z = v.targetZ;
+          
+          const dirs = [{x:1,z:0}, {x:-1,z:0}, {x:0,z:1}, {x:0,z:-1}];
+          const valid = dirs.filter(d => {
+            const nx = v.x + d.x; const nz = v.z + d.z;
+            return nx >= 0 && nx < GRID_SIZE && nz >= 0 && nz < GRID_SIZE && state.grid[nz][nx].type === 'road';
+          });
+          if (valid.length > 0) {
+            const next = valid[Math.floor(Math.random() * valid.length)];
+            v.targetX = v.x + next.x;
+            v.targetZ = v.z + next.z;
+          }
+        }
+
+        if (v.mesh) {
+          const startX = (v.x - GRID_SIZE / 2) * TILE_SIZE + TILE_SIZE / 2;
+          const startZ = (v.z - GRID_SIZE / 2) * TILE_SIZE + TILE_SIZE / 2;
+          const endX = (v.targetX - GRID_SIZE / 2) * TILE_SIZE + TILE_SIZE / 2;
+          const endZ = (v.targetZ - GRID_SIZE / 2) * TILE_SIZE + TILE_SIZE / 2;
+          
+          v.mesh.position.x = startX + (endX - startX) * v.progress;
+          v.mesh.position.z = startZ + (endZ - startZ) * v.progress;
+        }
+      });
+
       renderer.render(scene, camera);
     };
     animate();
@@ -119,12 +163,17 @@ export default function GameCanvas() {
       renderer.dispose();
       mountRef.current?.removeChild(renderer.domElement);
     };
-  }, []);
+  }, [state.grid]); // Re-bind to get latest state for traffic
 
+  // 3. Render Grid & Traffic
   useEffect(() => {
     const scene = sceneRef.current;
     meshesRef.current.forEach(mesh => scene.remove(mesh));
     meshesRef.current.clear();
+
+    // Clear existing vehicles from scene
+    vehiclesRef.current.forEach(v => { if(v.mesh) scene.remove(v.mesh); });
+    vehiclesRef.current = [];
 
     state.grid.forEach(row => {
       row.forEach(cell => {
@@ -133,9 +182,9 @@ export default function GameCanvas() {
           const group = new THREE.Group();
           
           let modelName = 'road';
-          if (cell.type === 'residential') modelName = `house-${cell.level}`; 
-          if (cell.type === 'commercial') modelName = `house-${cell.level}`; // Reusing house models for now
-          if (cell.type === 'industrial') modelName = `house-${cell.level}`; 
+          if (cell.type === 'residential' || cell.type === 'commercial' || cell.type === 'industrial') {
+            modelName = `house-${cell.level}`; 
+          }
           
           const template = modelCache.current.get(modelName) || modelCache.current.get('house-1');
           if (template) group.add(template.clone());
@@ -149,6 +198,22 @@ export default function GameCanvas() {
           group.userData = { isBuilding: cell.type !== 'road', gridX: cell.x, gridZ: cell.z };
           scene.add(group);
           meshesRef.current.set(key, group);
+
+          // Spawn Traffic on roads
+          if (cell.type === 'road' && Math.random() > 0.8 && vehiclesRef.current.length < 15) {
+            const carTemplate = modelCache.current.get('car');
+            if (carTemplate) {
+              const car = carTemplate.clone();
+              car.position.copy(group.position);
+              car.position.y = 0.5; // Lift car slightly off ground
+              car.scale.set(0.5, 0.5, 0.5); // Scale down if needed
+              scene.add(car);
+              vehiclesRef.current.push({
+                x: cell.x, z: cell.z, targetX: cell.x, targetZ: cell.z,
+                progress: 0, speed: 0.01 + Math.random() * 0.02, mesh: car
+              });
+            }
+          }
         }
       });
     });
@@ -221,9 +286,7 @@ export default function GameCanvas() {
           </div>
 
           <button 
-            onClick={() => {
-              setState(prev => upgradeBuilding(prev, selectedCell.x, selectedCell.z));
-            }}
+            onClick={() => setState(prev => upgradeBuilding(prev, selectedCell.x, selectedCell.z))}
             disabled={selectedCell.level >= MAX_BUILDING_LEVEL || state.money < getUpgradeCost(selectedCell.level)}
             className={`w-full py-2 rounded-lg font-bold ${
               selectedCell.level >= MAX_BUILDING_LEVEL 
@@ -239,4 +302,4 @@ export default function GameCanvas() {
       <div ref={mountRef} className="w-full h-full" />
     </div>
   );
-        }
+      }
