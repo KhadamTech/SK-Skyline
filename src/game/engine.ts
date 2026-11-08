@@ -2,7 +2,7 @@ import { Cell, GameState, BuildingType } from './types';
 
 export const GRID_SIZE = 20;
 export const TILE_SIZE = 4;
-export const MAX_BUILDING_LEVEL = 3;
+export const MAX_BUILDING_LEVEL = 10;
 
 export const createInitialState = (): GameState => {
   const grid: Cell[][] = [];
