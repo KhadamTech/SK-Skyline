@@ -1,24 +1,27 @@
 import * as THREE from 'three';
 
-export type BuildingType = 'empty' | 'road' | 'residential' | 'commercial' | 'industrial';
+export type BuildingCategory = 'residential' | 'commercial' | 'industrial' | 'road' | 'empty';
+export type VehicleType = 'car' | 'pedestrian';
 
 export interface Cell {
-  type: BuildingType;
+  category: BuildingCategory;
   level: number;
   x: number;
   z: number;
+  isOrigin: boolean; // True if this is the top-left tile of a multi-tile building
+  isLocked: boolean; // True if the player hasn't bought this land
 }
 
 export interface GameState {
   grid: Cell[][];
   money: number;
   population: number;
-  income: number;
-  selectedTool: BuildingType;
-  selectedBuilding: { x: number, z: number } | null; 
+  selectedTool: BuildingCategory;
+  selectedBuilding: { x: number, z: number } | null;
 }
 
-export interface Vehicle {
+export interface Agent {
+  type: VehicleType;
   x: number;
   z: number;
   targetX: number;
@@ -26,4 +29,5 @@ export interface Vehicle {
   progress: number;
   speed: number;
   mesh?: THREE.Object3D;
+  modelIndex: number;
 }
