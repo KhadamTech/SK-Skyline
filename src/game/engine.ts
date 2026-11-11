@@ -1,8 +1,8 @@
 import { Cell, GameState, BuildingCategory } from './types';
 
-export const GRID_SIZE = 30;
+export const GRID_SIZE = 40;
 export const TILE_SIZE = 4; // BIG tile size as requested
-export const MAX_BUILDING_LEVEL = 3;
+export const MAX_BUILDING_LEVEL = 7;
 
 // Helper to get how many tiles a building takes based on level
 export const getBuildingFootprint = (level: number) => {
