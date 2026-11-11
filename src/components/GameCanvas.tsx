@@ -3,97 +3,137 @@ import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { 
-  createInitialState, placeBuilding, upgradeBuilding, buyLand, getBuildingFootprint,
-  GRID_SIZE, TILE_SIZE, MAX_BUILDING_LEVEL 
-} from '../game/engine';
-import { GameState, BuildingCategory, Agent } from '../game/types';
+
+// --- CONSTANTS ---
+const GRID_SIZE = 30;
+const TILE_SIZE = 4;
+const MAX_LEVEL = 3;
+
+type Category = 'road' | 'building' | 'shop' | 'gov';
+type BuildingData = { id: string; name: string; path: string };
 
 export default function GameCanvas() {
   const mountRef = useRef<HTMLDivElement>(null);
-  const [state, setState] = useState<GameState>(createInitialState());
   const [loading, setLoading] = useState(true);
+  const [money, setMoney] = useState(50000);
+  const [population, setPopulation] = useState(0);
   
+  // UI State
+  const [activeCategory, setActiveCategory] = useState<Category>('road');
+  const [selectedModel, setSelectedModel] = useState<BuildingData | null>(null);
+  const [availableModels, setAvailableModels] = useState<Record<string, BuildingData[]>>({});
+  const [selectedBuilding, setSelectedBuilding] = useState<{x: number, z: number, level: number, category: string} | null>(null);
+
+  // 3D Refs
   const sceneRef = useRef<THREE.Scene>(new THREE.Scene());
-  const cameraRef = useRef<THREE.PerspectiveCamera>(new THREE.PerspectiveCamera(45, 1, 0.1, 1000));
+  const cameraRef = useRef<THREE.PerspectiveCamera>(new THREE.PerspectiveCamera(40, 1, 1, 1000));
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
-  
-  // FIXED: Changed THREE.Group to THREE.Object3D so it accepts both Meshes (locks) and Groups (buildings)
-  const meshesRef = useRef<Map<string, THREE.Object3D>>(new Map());
-  
-  const agentsRef = useRef<Agent[]>([]);
-  
-  // Caches
+  const controlsRef = useRef<OrbitControls | null>(null);
   const modelCache = useRef<Map<string, THREE.Object3D>>(new Map());
-  const carModels = useRef<THREE.Object3D[]>([]);
-  const popModels = useRef<THREE.Object3D[]>([]);
+  const gridData = useRef<Record<string, { level: number, category: string, mesh: THREE.Object3D }>>({});
+  
+  // Traffic
+  const agents = useRef<{mesh: THREE.Object3D, x: number, z: number, tx: number, tz: number, prog: number, speed: number}[]>([]);
 
-  // 1. Load Assets
+  // --- 1. DEFINE AVAILABLE MODELS (Based on your GitHub folders) ---
   useEffect(() => {
-    const loader = new GLTFLoader();
-    const filesToLoad = [
-      '/models/roads/road.glb',
-      '/models/buildings/level1.glb',
-      '/models/buildings/level2.glb',
-      '/models/buildings/level3.glb',
-      '/models/cars/car1.glb', '/models/cars/car2.glb', '/models/cars/car3.glb',
-      '/models/population/population1.glb', '/models/population/population2.glb'
-    ];
+    // This hardcodes the lists so the UI knows what to show
+    const models = {
+      road: [{ id: 'road', name: 'Straight Road', path: '/models/roads/road.glb' }],
+      building: [
+        { id: 'level1', name: 'Small House', path: '/models/buildings/level1.glb' },
+        { id: 'level2', name: 'Medium Building', path: '/models/buildings/level2.glb' },
+        { id: 'level3', name: 'Skyscraper', path: '/models/buildings/level3.glb' }
+      ],
+      shop: [
+        { id: 'shop1', name: 'Grocery Store', path: '/models/shop/shop1.glb' },
+        { id: 'shop2', name: 'Clothing Store', path: '/models/shop/shop2.glb' }
+      ],
+      gov: [
+        { id: 'gov1', name: 'City Hall', path: '/models/gov/gov1.glb' },
+        { id: 'police', name: 'Police Station', path: '/models/gov/police_station1.glb' }
+      ]
+    };
+    setAvailableModels(models);
+    setSelectedModel(models.road[0]); // Default to road
 
+    // Load everything into cache
+    const loader = new GLTFLoader();
+    const allModels = [...models.road, ...models.building, ...models.shop, ...models.gov];
     let loaded = 0;
-    filesToLoad.forEach(path => {
-      loader.load(path, (gltf) => {
-        const name = path.split('/').pop()?.replace('.glb', '');
-        if (name?.includes('car')) carModels.current.push(gltf.scene);
-        else if (name?.includes('population')) popModels.current.push(gltf.scene);
-        else if (name) modelCache.current.set(name, gltf.scene);
-        
+
+    allModels.forEach(m => {
+      loader.load(m.path, (gltf) => {
+        modelCache.current.set(m.path, gltf.scene);
         loaded++;
-        if (loaded === filesToLoad.length) setLoading(false);
+        if (loaded >= allModels.length) setLoading(false);
       }, undefined, () => {
-        // Fallback if file doesn't exist
+        // Fallback if file missing
+        const box = new THREE.Mesh(new THREE.BoxGeometry(TILE_SIZE*0.9, 4, TILE_SIZE*0.9), new THREE.MeshStandardMaterial({ color: 0x888888 }));
+        modelCache.current.set(m.path, box);
         loaded++;
-        if (loaded === filesToLoad.length) setLoading(false);
+        if (loaded >= allModels.length) setLoading(false);
       });
     });
   }, []);
 
-  // 2. Setup Scene
+  // --- 2. SETUP SCENE & CAMERA ---
   useEffect(() => {
     if (!mountRef.current) return;
     const scene = sceneRef.current;
     const camera = cameraRef.current;
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     
+    // Setup Renderer
     renderer.setSize(mountRef.current.clientWidth, mountRef.current.clientHeight);
     renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     mountRef.current.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+    // Lighting (Make it look like Skyline)
+    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 1);
+    hemiLight.position.set(0, 50, 0);
+    scene.add(hemiLight);
+
     const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
-    dirLight.position.set(50, 100, 50);
+    dirLight.position.set(-30, 50, 30);
     dirLight.castShadow = true;
+    dirLight.shadow.camera.left = -50;
+    dirLight.shadow.camera.right = 50;
+    dirLight.shadow.camera.top = 50;
+    dirLight.shadow.camera.bottom = -50;
     scene.add(dirLight);
 
-    camera.position.set(40, 50, 40);
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.maxPolarAngle = Math.PI / 2.2;
-
-    // Grid Helper
-    scene.add(new THREE.GridHelper(GRID_SIZE * TILE_SIZE, GRID_SIZE, 0x555555, 0x333333));
-
-    // Raycaster for clicks
-    const raycaster = new THREE.Raycaster();
-    const mouse = new THREE.Vector2();
+    // Ground Grid
+    const gridHelper = new THREE.GridHelper(GRID_SIZE * TILE_SIZE, GRID_SIZE, 0x555555, 0x222222);
+    scene.add(gridHelper);
+    
+    // Invisible ground for clicking
     const groundGeo = new THREE.PlaneGeometry(GRID_SIZE * TILE_SIZE, GRID_SIZE * TILE_SIZE);
     const ground = new THREE.Mesh(groundGeo, new THREE.MeshBasicMaterial({ visible: false }));
     ground.rotation.x = -Math.PI / 2;
     ground.userData.isGround = true;
     scene.add(ground);
 
-    const onClick = (event: PointerEvent) => {
+    // Camera & Controls (Closer, Skyline Style)
+    camera.position.set(30, 40, 30);
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.maxPolarAngle = Math.PI / 2.1; // Don't go under ground
+    controls.minDistance = 10; // Allow zooming in close
+    controls.maxDistance = 100; // Allow zooming out
+    controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_ROTATE }; // Mobile Touch Support
+    controlsRef.current = controls;
+
+    // --- 3. RAYCASTER CLICK LOGIC ---
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+
+    const handlePointerDown = (event: PointerEvent) => {
+      // Ignore clicks on UI
+      if ((event.target as HTMLElement).tagName === 'BUTTON' || (event.target as HTMLElement).closest('div')?.className.includes('bg-gray-900')) return;
+
       const rect = renderer.domElement.getBoundingClientRect();
       mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -102,69 +142,55 @@ export default function GameCanvas() {
       const intersects = raycaster.intersectObjects(scene.children, true);
       
       for (const hit of intersects) {
+        // If we clicked a building, open its UI
         if (hit.object.userData.isBuilding) {
-          setState(prev => ({ ...prev, selectedBuilding: { x: hit.object.userData.gx, z: hit.object.userData.gz } }));
+          const gx = hit.object.userData.gx;
+          const gz = hit.object.userData.gz;
+          const key = `${gx}-${gz}`;
+          if (gridData.current[key]) {
+             setSelectedBuilding({ x: gx, z: gz, level: gridData.current[key].level, category: gridData.current[key].category });
+          }
           return;
         }
+        
+        // If we clicked ground, place building
         if (hit.object.userData.isGround) {
           const gx = Math.floor(hit.point.x / TILE_SIZE + GRID_SIZE / 2);
           const gz = Math.floor(hit.point.z / TILE_SIZE + GRID_SIZE / 2);
-          
-          if (gx >= 0 && gx < GRID_SIZE && gz >= 0 && gz < GRID_SIZE) {
-            const cell = state.grid[gz][gx];
-            if (cell.isLocked) {
-              setState(prev => buyLand(prev, gx, gz));
-            } else {
-              setState(prev => ({ 
-                ...placeBuilding(prev, gx, gz, prev.selectedTool), 
-                selectedBuilding: null
-              }));
-            }
-          }
+          handlePlacement(gx, gz);
           return;
         }
       }
     };
 
-    renderer.domElement.addEventListener('pointerdown', onClick);
+    renderer.domElement.addEventListener('pointerdown', handlePointerDown);
 
-    // Animation Loop (Traffic & Pedestrians)
+    // --- 4. ANIMATION LOOP ---
     let reqId: number;
     const animate = () => {
       reqId = requestAnimationFrame(animate);
       controls.update();
       
-      // Move Cars and Pedestrians
-      agentsRef.current.forEach(a => {
-        a.progress += a.speed;
-        if (a.progress >= 1) {
-          a.progress = 0;
-          a.x = a.targetX;
-          a.z = a.targetZ;
-          
-          // Find next road
+      // Move cars
+      agents.current.forEach(a => {
+        a.prog += a.speed;
+        if (a.prog >= 1) {
+          a.prog = 0;
+          a.x = a.tx; a.z = a.tz;
           const dirs = [{x:1,z:0}, {x:-1,z:0}, {x:0,z:1}, {x:0,z:-1}];
-          const valid = dirs.filter(d => {
-            const nx = a.x + d.x; const nz = a.z + d.z;
-            return nx >= 0 && nx < GRID_SIZE && nz >= 0 && nz < GRID_SIZE && state.grid[nz][nx].category === 'road';
-          });
+          const valid = dirs.filter(d => gridData.current[`${a.x+d.x}-${a.z+d.z}`]?.category === 'road');
           if (valid.length > 0) {
             const next = valid[Math.floor(Math.random() * valid.length)];
-            a.targetX = a.x + next.x;
-            a.targetZ = a.z + next.z;
-          } else {
-            a.targetX = a.x; a.targetZ = a.z; // Stop if no road
+            a.tx = a.x + next.x; a.tz = a.z + next.z;
           }
         }
-
         if (a.mesh) {
-          const sx = (a.x - GRID_SIZE / 2) * TILE_SIZE + TILE_SIZE / 2;
-          const sz = (a.z - GRID_SIZE / 2) * TILE_SIZE + TILE_SIZE / 2;
-          const ex = (a.targetX - GRID_SIZE / 2) * TILE_SIZE + TILE_SIZE / 2;
-          const ez = (a.targetZ - GRID_SIZE / 2) * TILE_SIZE + TILE_SIZE / 2;
-          
-          a.mesh.position.x = sx + (ex - sx) * a.progress;
-          a.mesh.position.z = sz + (ez - sz) * a.progress;
+          const sx = (a.x - GRID_SIZE/2)*TILE_SIZE + TILE_SIZE/2;
+          const sz = (a.z - GRID_SIZE/2)*TILE_SIZE + TILE_SIZE/2;
+          const ex = (a.tx - GRID_SIZE/2)*TILE_SIZE + TILE_SIZE/2;
+          const ez = (a.tz - GRID_SIZE/2)*TILE_SIZE + TILE_SIZE/2;
+          a.mesh.position.x = sx + (ex - sx) * a.prog;
+          a.mesh.position.z = sz + (ez - sz) * a.prog;
         }
       });
 
@@ -172,174 +198,197 @@ export default function GameCanvas() {
     };
     animate();
 
+    const handleResize = () => {
+      if (!mountRef.current) return;
+      camera.aspect = mountRef.current.clientWidth / mountRef.current.clientHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(mountRef.current.clientWidth, mountRef.current.clientHeight);
+    };
+    window.addEventListener('resize', handleResize);
+
     return () => {
-      renderer.domElement.removeEventListener('pointerdown', onClick);
+      window.removeEventListener('resize', handleResize);
+      renderer.domElement.removeEventListener('pointerdown', handlePointerDown);
       cancelAnimationFrame(reqId);
       renderer.dispose();
       mountRef.current?.removeChild(renderer.domElement);
     };
-  }, [state.grid]); // Rebind on grid change to get latest traffic logic
+  }, []); // Run once
 
-  // 3. Render Grid (Multi-Tile & Upgrades)
-  useEffect(() => {
+  // --- 5. PLACEMENT LOGIC ---
+  const handlePlacement = (x: number, z: number) => {
+    if (!selectedModel || x < 0 || x >= GRID_SIZE || z < 0 || z >= GRID_SIZE) return;
+
+    // Check costs
+    const costs: Record<string, number> = { road: 10, building: 500, shop: 800, gov: 1500 };
+    const cost = costs[activeCategory];
+    if (money < cost) return;
+
+    // Determine Footprint based on Category
+    let w = 1, h = 1;
+    if (activeCategory === 'building') { w = 2; h = 2; } // 4 blocks
+    if (activeCategory === 'shop') { w = 2; h = 2; } // 4 blocks
+    if (activeCategory === 'gov') { w = 3; h = 3; } // 9 blocks
+
+    // Check if space is empty
+    for(let dz=0; dz<h; dz++) {
+      for(let dx=0; dx<w; dx++) {
+        if (gridData.current[`${x+dx}-${z+dz}`]) return; // Blocked
+      }
+    }
+
+    // Place the building
     const scene = sceneRef.current;
-    meshesRef.current.forEach(m => scene.remove(m));
-    meshesRef.current.clear();
+    const template = modelCache.current.get(selectedModel.path);
+    if (!template) return;
 
-    // Clear agents that no longer have roads
-    agentsRef.current.forEach(a => { if(a.mesh) scene.remove(a.mesh); });
-    agentsRef.current = [];
+    const group = new THREE.Group();
+    const clonedMesh = template.clone();
+    
+    // Scale the model to fit the multi-tile footprint
+    const box = new THREE.Box3().setFromObject(clonedMesh);
+    const size = box.getSize(new THREE.Vector3());
+    const targetWidth = w * TILE_SIZE;
+    const scale = targetWidth / (size.x || 1);
+    clonedMesh.scale.set(scale, scale, scale);
 
-    let totalPop = 0;
+    group.add(clonedMesh);
+    
+    // Position
+    group.position.set(
+      (x - GRID_SIZE/2)*TILE_SIZE + (w*TILE_SIZE)/2,
+      0,
+      (z - GRID_SIZE/2)*TILE_SIZE + (h*TILE_SIZE)/2
+    );
 
-    state.grid.forEach(row => {
-      row.forEach(cell => {
-        if (cell.category !== 'empty') {
-          // Render Land Locks
-          if (cell.isLocked) {
-            const lockGeo = new THREE.BoxGeometry(TILE_SIZE, 0.5, TILE_SIZE);
-            const lockMat = new THREE.MeshStandardMaterial({ color: 0x222222, transparent: true, opacity: 0.8 });
-            const lockMesh = new THREE.Mesh(lockGeo, lockMat);
-            lockMesh.position.set((cell.x - GRID_SIZE/2)*TILE_SIZE + TILE_SIZE/2, -0.2, (cell.z - GRID_SIZE/2)*TILE_SIZE + TILE_SIZE/2);
-            scene.add(lockMesh);
-            meshesRef.current.set(`lock-${cell.x}-${cell.z}`, lockMesh);
-            return;
-          }
+    // Tag for clicking
+    group.userData = { isBuilding: activeCategory !== 'road', gx: x, gz: z };
+    scene.add(group);
 
-          const group = new THREE.Group();
-          let modelName = 'road';
-          
-          if (cell.category !== 'road') {
-             modelName = `level${cell.level}`;
-             totalPop += cell.level * 10; // Increase pop based on level
-          }
+    // Save to grid data
+    for(let dz=0; dz<h; dz++) {
+      for(let dx=0; dx<w; dx++) {
+        gridData.current[`${x+dx}-${z+dz}`] = { level: 1, category: activeCategory, mesh: group };
+      }
+    }
 
-          const template = modelCache.current.get(modelName);
-          if (template) {
-            const cloned = template.clone();
-            
-            // Scale multi-tile buildings to fit their footprint!
-            if (cell.category !== 'road' && cell.isOrigin) {
-              const fp = getBuildingFootprint(cell.level);
-              const targetWidth = fp.w * TILE_SIZE;
-              // Assuming your GLB is roughly 4 units wide by default
-              const scale = targetWidth / 4; 
-              cloned.scale.set(scale, scale, scale);
-            }
-            group.add(cloned);
-          } else {
-            // Fallback
-            const geo = new THREE.BoxGeometry(TILE_SIZE * 0.9, 2, TILE_SIZE * 0.9);
-            const mat = new THREE.MeshStandardMaterial({ color: cell.category === 'road' ? 0x333333 : 0x4ade80 });
-            group.add(new THREE.Mesh(geo, mat));
-          }
+    setMoney(m => m - cost);
+    if (activeCategory === 'building') setPopulation(p => p + 10);
 
-          // Position on grid
-          group.position.set(
-            (cell.x - GRID_SIZE / 2) * TILE_SIZE + TILE_SIZE / 2,
-            0,
-            (cell.z - GRID_SIZE / 2) * TILE_SIZE + TILE_SIZE / 2
-          );
-          
-          // Center multi-tile buildings perfectly
-          if (cell.category !== 'road' && cell.isOrigin) {
-            const fp = getBuildingFootprint(cell.level);
-            group.position.x += (fp.w - 1) * TILE_SIZE / 2;
-            group.position.z += (fp.h - 1) * TILE_SIZE / 2;
-          }
+    // Spawn Traffic if road
+    if (activeCategory === 'road') {
+       // Spawn simple box cars for now
+       const carGeo = new THREE.BoxGeometry(1, 1, 2);
+       const carMat = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+       const car = new THREE.Mesh(carGeo, carMat);
+       car.position.copy(group.position);
+       car.position.y = 0.5;
+       scene.add(car);
+       agents.current.push({ mesh: car, x, z, tx: x, tz: z, prog: 0, speed: 0.02 });
+    }
+  };
 
-          group.userData = { isBuilding: cell.category !== 'road', gx: cell.x, gz: cell.z };
-          scene.add(group);
-          meshesRef.current.set(`b-${cell.x}-${cell.z}`, group);
+  // --- 6. UPGRADE LOGIC ---
+  const handleUpgrade = () => {
+    if (!selectedBuilding || selectedBuilding.level >= MAX_LEVEL) return;
+    const cost = selectedBuilding.level * 1000;
+    if (money < cost) return;
 
-          // Spawn Traffic & Pedestrians
-          if (cell.category === 'road' && Math.random() > 0.95 && agentsRef.current.length < totalPop / 5) {
-            const isCar = Math.random() > 0.4;
-            const pool = isCar ? carModels.current : popModels.current;
-            
-            if (pool.length > 0) {
-              const model = pool[Math.floor(Math.random() * pool.length)].clone();
-              model.position.copy(group.position);
-              model.position.y = isCar ? 0.2 : 0.1; // Cars float slightly higher
-              if (!isCar) model.scale.set(0.5, 0.5, 0.5); // Pedestrians are smaller
-              
-              scene.add(model);
-              agentsRef.current.push({
-                type: isCar ? 'car' : 'pedestrian',
-                x: cell.x, z: cell.z, targetX: cell.x, targetZ: cell.z,
-                progress: 0, speed: 0.01 + Math.random() * 0.02, mesh: model, modelIndex: 0
-              });
-            }
-          }
-        }
-      });
-    });
+    const key = `${selectedBuilding.x}-${selectedBuilding.z}`;
+    const oldGroup = gridData.current[key].mesh;
+    
+    // Change appearance
+    const nextLevelPath = `/models/buildings/level${selectedBuilding.level + 1}.glb`;
+    const template = modelCache.current.get(nextLevelPath);
+    
+    if (template) {
+      oldGroup.clear(); // Remove old model
+      const clonedMesh = template.clone();
+      // Scale to be slightly bigger
+      const scale = 1.2 + (selectedBuilding.level * 0.2);
+      clonedMesh.scale.set(scale, scale, scale);
+      oldGroup.add(clonedMesh);
+    }
 
-    setState(prev => prev.population === totalPop ? prev : { ...prev, population: totalPop });
-
-  }, [state.grid]);
-
-  const selectedCell = state.selectedBuilding ? state.grid[state.selectedBuilding.z][state.selectedBuilding.x] : null;
+    // Update Data
+    gridData.current[key].level += 1;
+    setSelectedBuilding({ ...selectedBuilding, level: selectedBuilding.level + 1 });
+    setMoney(m => m - cost);
+    setPopulation(p => p + 15);
+  };
 
   return (
     <div className="relative w-full h-screen bg-[#0f172a] overflow-hidden">
-      {loading && <div className="absolute inset-0 flex items-center justify-center text-white bg-slate-900 z-50">Loading 3D City...</div>}
+      {loading && <div className="absolute inset-0 flex items-center justify-center text-white bg-slate-900 z-50 font-bold text-xl">Loading Models...</div>}
       
-      {/* Top Bar UI */}
-      <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 flex flex-wrap justify-center gap-2 p-2 bg-gray-900/90 border border-gray-700 rounded-xl shadow-2xl">
-        <div className="flex gap-4 px-4 items-center border-r border-gray-700 text-white font-mono text-sm">
-          <span className="text-green-400">💰 ${state.money}</span>
-          <span className="text-blue-400">👥 {state.population}</span>
+      {/* TOP HUD */}
+      <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 flex flex-col items-center gap-2">
+        <div className="flex gap-6 px-6 py-2 bg-gray-900/90 border border-gray-700 rounded-full shadow-lg text-white font-mono text-sm">
+          <span className="text-green-400 font-bold">💰 ${money}</span>
+          <span className="text-blue-400 font-bold">👥 {population}</span>
         </div>
-        <div className="flex gap-1">
-          {(['road', 'residential', 'commercial', 'industrial'] as BuildingCategory[]).map(t => (
+
+        {/* CATEGORY BAR */}
+        <div className="flex gap-2 p-1 bg-gray-900/80 border border-gray-700 rounded-xl shadow-xl">
+          {(['road', 'building', 'shop', 'gov'] as Category[]).map(c => (
             <button
-              key={t}
-              onClick={() => setState({ ...state, selectedTool: t, selectedBuilding: null })}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold ${
-                state.selectedTool === t ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400'
+              key={c}
+              onClick={() => { setActiveCategory(c); setSelectedModel(null); setSelectedBuilding(null); }}
+              className={`px-4 py-2 rounded-lg text-xs font-bold uppercase transition-all ${
+                activeCategory === c ? 'bg-blue-600 text-white shadow-md' : 'text-gray-400 hover:bg-gray-800'
               }`}
             >
-              {t.toUpperCase()}
+              {c === 'gov' ? 'Government' : c}
             </button>
           ))}
         </div>
+
+        {/* SUB-MENU (Shows specific GLB files) */}
+        <div className="flex gap-2 p-2 bg-gray-800/90 border border-gray-600 rounded-lg shadow-lg mt-1">
+           {availableModels[activeCategory]?.map(m => (
+             <button
+               key={m.id}
+               onClick={() => setSelectedModel(m)}
+               className={`px-3 py-1 text-xs rounded-md font-semibold border ${
+                 selectedModel?.id === m.id ? 'bg-green-600 border-green-400 text-white' : 'bg-gray-700 border-gray-500 text-gray-300 hover:bg-gray-600'
+               }`}
+             >
+               {m.name}
+             </button>
+           ))}
+        </div>
       </div>
 
-      {/* Details Panel (Only Upgrades Residential/Commercial/Industrial) */}
-      {selectedCell && selectedCell.isOrigin && selectedCell.category !== 'road' && (
-        <div className="absolute top-24 right-4 w-72 bg-gray-900/95 backdrop-blur-md rounded-xl border border-gray-700 shadow-2xl z-20 text-white p-4">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-lg font-bold capitalize">{selectedCell.category}</h2>
-            <button onClick={() => setState({ ...state, selectedBuilding: null })} className="text-gray-400 hover:text-white">✖</button>
-          </div>
-
-          <div className="space-y-2 text-sm mb-6">
-            <div className="flex justify-between border-b border-gray-700 pb-1">
-              <span className="text-gray-400">Level:</span>
-              <span className="font-bold text-yellow-400">{selectedCell.level} / {MAX_BUILDING_LEVEL}</span>
-            </div>
-            <div className="flex justify-between border-b border-gray-700 pb-1">
-              <span className="text-gray-400">Footprint:</span>
-              <span className="font-bold">{getBuildingFootprint(selectedCell.level).w * getBuildingFootprint(selectedCell.level).h} Blocks</span>
-            </div>
-          </div>
-
-          <button 
-            onClick={() => setState(prev => upgradeBuilding(prev, selectedCell.x, selectedCell.z))}
-            disabled={selectedCell.level >= MAX_BUILDING_LEVEL || state.money < selectedCell.level * 1000}
-            className={`w-full py-2 rounded-lg font-bold ${
-              selectedCell.level >= MAX_BUILDING_LEVEL 
-                ? 'bg-gray-700 text-gray-500 cursor-not-allowed' 
-                : 'bg-blue-600 hover:bg-blue-500 text-white'
-            }`}
-          >
-            {selectedCell.level >= MAX_BUILDING_LEVEL ? 'Max Level' : `Upgrade ($${selectedCell.level * 1000})`}
-          </button>
+      {/* CLICKED BUILDING PANEL */}
+      {selectedBuilding && (
+        <div className="absolute top-32 right-4 w-64 bg-gray-900/95 border border-gray-700 rounded-xl shadow-2xl z-20 text-white p-4">
+           <h2 className="text-lg font-bold capitalize mb-2">{selectedBuilding.category}</h2>
+           <div className="flex justify-between text-sm mb-4">
+             <span className="text-gray-400">Level</span>
+             <span className="text-yellow-400 font-bold">{selectedBuilding.level} / 3</span>
+           </div>
+           
+           {/* Only show upgrade button for standard buildings */}
+           {selectedBuilding.category === 'building' ? (
+             <button 
+               onClick={handleUpgrade}
+               disabled={selectedBuilding.level >= MAX_LEVEL || money < selectedBuilding.level * 1000}
+               className="w-full py-2 bg-blue-600 hover:bg-blue-500 rounded-lg font-bold text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+             >
+               {selectedBuilding.level >= MAX_LEVEL ? 'Max Level' : `Upgrade ($${selectedBuilding.level * 1000})`}
+             </button>
+           ) : (
+             <div className="text-xs text-center text-gray-500 italic mt-2">
+               This building cannot be upgraded.
+             </div>
+           )}
+           
+           <button onClick={() => setSelectedBuilding(null)} className="w-full mt-2 py-1 bg-gray-800 rounded text-xs">Close</button>
         </div>
       )}
 
-      <div ref={mountRef} className="w-full h-full" />
+      {/* 3D MAP */}
+      <div ref={mountRef} className="w-full h-full cursor-crosshair" />
     </div>
   );
-      }
+         }
