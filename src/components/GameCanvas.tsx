@@ -17,7 +17,10 @@ export default function GameCanvas() {
   const sceneRef = useRef<THREE.Scene>(new THREE.Scene());
   const cameraRef = useRef<THREE.PerspectiveCamera>(new THREE.PerspectiveCamera(45, 1, 0.1, 1000));
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
-  const meshesRef = useRef<Map<string, THREE.Group>>(new Map());
+  
+  // FIXED: Changed THREE.Group to THREE.Object3D so it accepts both Meshes (locks) and Groups (buildings)
+  const meshesRef = useRef<Map<string, THREE.Object3D>>(new Map());
+  
   const agentsRef = useRef<Agent[]>([]);
   
   // Caches
@@ -48,6 +51,7 @@ export default function GameCanvas() {
         loaded++;
         if (loaded === filesToLoad.length) setLoading(false);
       }, undefined, () => {
+        // Fallback if file doesn't exist
         loaded++;
         if (loaded === filesToLoad.length) setLoading(false);
       });
@@ -338,4 +342,4 @@ export default function GameCanvas() {
       <div ref={mountRef} className="w-full h-full" />
     </div>
   );
-                                  }
+      }
