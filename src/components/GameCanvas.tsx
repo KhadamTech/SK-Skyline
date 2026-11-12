@@ -66,8 +66,7 @@ const CATEGORIES: Record<Category, ModelOption[]> = {
     { name: 'Traffic Sign', path: '/models/roads/road_traffic_sign.glb' }
   ],
 
-  // Only Level 1 appears in the building menu.
-  // Levels 2-7 are loaded separately for upgrading.
+  // Only Level 1 is available in the construction menu.
   building: [
     { name: 'Building Level 1', path: '/models/buildings/level1.glb' }
   ],
@@ -128,11 +127,13 @@ function createFallbackModel(path: string): THREE.Group {
   const group = new THREE.Group();
 
   if (path.includes('/cars/')) {
+    const id = Number(path.match(/car(\d+)/)?.[1] || 1);
+
     const body = new THREE.Mesh(
       new THREE.BoxGeometry(1.8, 0.65, 3.2),
       new THREE.MeshStandardMaterial({
         color: new THREE.Color().setHSL(
-          (Number(path.match(/car(\d+)/)?.[1] || 1) * 0.13) % 1,
+          (id * 0.13) % 1,
           0.7,
           0.48
         ),
@@ -178,7 +179,9 @@ function createFallbackModel(path: string): THREE.Group {
   }
 
   if (path.includes('/population/')) {
-    const id = Number(path.match(/population(\d+)/)?.[1] || 1);
+    const id = Number(
+      path.match(/population(\d+)/)?.[1] || 1
+    );
 
     const colors = [
       0x2563eb,
@@ -189,7 +192,9 @@ function createFallbackModel(path: string): THREE.Group {
 
     const body = new THREE.Mesh(
       new THREE.CylinderGeometry(0.18, 0.22, 0.85, 9),
-      new THREE.MeshStandardMaterial({ color: colors[id - 1] })
+      new THREE.MeshStandardMaterial({
+        color: colors[id - 1]
+      })
     );
 
     body.position.y = 0.7;
@@ -198,7 +203,9 @@ function createFallbackModel(path: string): THREE.Group {
 
     const head = new THREE.Mesh(
       new THREE.SphereGeometry(0.18, 12, 12),
-      new THREE.MeshStandardMaterial({ color: 0xd9a77d })
+      new THREE.MeshStandardMaterial({
+        color: 0xd9a77d
+      })
     );
 
     head.position.y = 1.25;
@@ -227,7 +234,9 @@ function createFallbackModel(path: string): THREE.Group {
     if (path.includes('road.glb')) {
       const line = new THREE.Mesh(
         new THREE.BoxGeometry(0.12, 0.025, 1.3),
-        new THREE.MeshBasicMaterial({ color: 0xf6d365 })
+        new THREE.MeshBasicMaterial({
+          color: 0xf6d365
+        })
       );
 
       line.position.y = 0.13;
@@ -237,7 +246,9 @@ function createFallbackModel(path: string): THREE.Group {
     if (path.includes('lamp')) {
       const pole = new THREE.Mesh(
         new THREE.CylinderGeometry(0.07, 0.1, 3.5, 10),
-        new THREE.MeshStandardMaterial({ color: 0x343c49 })
+        new THREE.MeshStandardMaterial({
+          color: 0x343c49
+        })
       );
 
       pole.position.set(1.4, 1.8, 0);
@@ -245,7 +256,9 @@ function createFallbackModel(path: string): THREE.Group {
 
       const lamp = new THREE.Mesh(
         new THREE.SphereGeometry(0.23, 12, 12),
-        new THREE.MeshBasicMaterial({ color: 0xffe6a0 })
+        new THREE.MeshBasicMaterial({
+          color: 0xffe6a0
+        })
       );
 
       lamp.position.set(1.4, 3.6, 0);
@@ -255,7 +268,9 @@ function createFallbackModel(path: string): THREE.Group {
     if (path.includes('traffic_sign')) {
       const pole = new THREE.Mesh(
         new THREE.CylinderGeometry(0.06, 0.06, 2, 8),
-        new THREE.MeshStandardMaterial({ color: 0x777777 })
+        new THREE.MeshStandardMaterial({
+          color: 0x777777
+        })
       );
 
       pole.position.y = 1;
@@ -263,7 +278,9 @@ function createFallbackModel(path: string): THREE.Group {
 
       const sign = new THREE.Mesh(
         new THREE.BoxGeometry(0.8, 0.65, 0.1),
-        new THREE.MeshStandardMaterial({ color: 0x2563eb })
+        new THREE.MeshStandardMaterial({
+          color: 0x2563eb
+        })
       );
 
       sign.position.set(0, 1.8, 0);
@@ -273,7 +290,7 @@ function createFallbackModel(path: string): THREE.Group {
     return group;
   }
 
-  // Building fallback
+  // Fallback building
   const width = isGov ? 10 : isShop ? 6 : 7;
   const depth = isGov ? 10 : isShop ? 6 : 7;
   const height = isGov ? 10 : isShop ? 3.5 : 12;
@@ -281,7 +298,11 @@ function createFallbackModel(path: string): THREE.Group {
   const body = new THREE.Mesh(
     new THREE.BoxGeometry(width, height, depth),
     new THREE.MeshStandardMaterial({
-      color: isGov ? 0xc3cbd5 : isShop ? 0xd6c5a3 : 0x849db7,
+      color: isGov
+        ? 0xc3cbd5
+        : isShop
+          ? 0xd6c5a3
+          : 0x849db7,
       roughness: 0.55,
       metalness: 0.12
     })
@@ -320,8 +341,14 @@ function createFallbackModel(path: string): THREE.Group {
   }
 
   const roof = new THREE.Mesh(
-    new THREE.BoxGeometry(width + 0.3, 0.35, depth + 0.3),
-    new THREE.MeshStandardMaterial({ color: 0x263345 })
+    new THREE.BoxGeometry(
+      width + 0.3,
+      0.35,
+      depth + 0.3
+    ),
+    new THREE.MeshStandardMaterial({
+      color: 0x263345
+    })
   );
 
   roof.position.y = height + 0.17;
@@ -330,10 +357,17 @@ function createFallbackModel(path: string): THREE.Group {
 
   const entrance = new THREE.Mesh(
     new THREE.BoxGeometry(1.2, 2.2, 0.15),
-    new THREE.MeshStandardMaterial({ color: 0x273d54 })
+    new THREE.MeshStandardMaterial({
+      color: 0x273d54
+    })
   );
 
-  entrance.position.set(0, 1.1, depth / 2 + 0.1);
+  entrance.position.set(
+    0,
+    1.1,
+    depth / 2 + 0.1
+  );
+
   group.add(entrance);
 
   return group;
@@ -374,6 +408,7 @@ function prepareModel(
   });
 
   root.add(model);
+
   return root;
 }
 
@@ -410,7 +445,9 @@ export default function GameCanvas() {
 
   const sceneRef = useRef<THREE.Scene | null>(null);
 
-  const modelCache = useRef<Map<string, THREE.Object3D>>(new Map());
+  const modelCache = useRef<Map<string, THREE.Object3D>>(
+    new Map()
+  );
 
   const gridData = useRef<Record<string, GridItem>>({});
 
@@ -443,7 +480,9 @@ export default function GameCanvas() {
       ...PERSON_PATHS
     ];
 
-    const paths = [...new Set(allPaths)];
+    // FIX: Use Array.from instead of spread iteration.
+    // This supports older TypeScript compilation targets.
+    const paths = Array.from(new Set(allPaths));
 
     let completed = 0;
     let active = true;
@@ -463,6 +502,7 @@ export default function GameCanvas() {
           if (active) {
             modelCache.current.set(path, gltf.scene);
           }
+
           finish();
         },
         undefined,
@@ -473,6 +513,7 @@ export default function GameCanvas() {
               createFallbackModel(path)
             );
           }
+
           finish();
         }
       );
@@ -489,7 +530,10 @@ export default function GameCanvas() {
 
   const addEnvironment = (scene: THREE.Scene) => {
     const terrain = new THREE.Mesh(
-      new THREE.PlaneGeometry(WORLD_SIZE * 2, WORLD_SIZE * 2),
+      new THREE.PlaneGeometry(
+        WORLD_SIZE * 2,
+        WORLD_SIZE * 2
+      ),
       new THREE.MeshStandardMaterial({
         color: 0x253e35,
         roughness: 1
@@ -502,7 +546,10 @@ export default function GameCanvas() {
     scene.add(terrain);
 
     const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE),
+      new THREE.PlaneGeometry(
+        WORLD_SIZE,
+        WORLD_SIZE
+      ),
       new THREE.MeshStandardMaterial({
         color: 0x66786c,
         roughness: 1
@@ -513,6 +560,7 @@ export default function GameCanvas() {
     ground.position.y = -0.02;
     ground.receiveShadow = true;
     ground.userData.isGround = true;
+
     scene.add(ground);
 
     const grid = new THREE.GridHelper(
@@ -530,7 +578,7 @@ export default function GameCanvas() {
 
     scene.add(grid);
 
-    // Trees outside the main construction area
+    // Decorative trees
     const trunkMaterial = new THREE.MeshStandardMaterial({
       color: 0x65452e
     });
@@ -543,7 +591,12 @@ export default function GameCanvas() {
       const tree = new THREE.Group();
 
       const trunk = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.13, 0.2, 1.5, 7),
+        new THREE.CylinderGeometry(
+          0.13,
+          0.2,
+          1.5,
+          7
+        ),
         trunkMaterial
       );
 
@@ -579,6 +632,7 @@ export default function GameCanvas() {
 
   const isRoad = (x: number, z: number) => {
     const item = gridData.current[`${x}-${z}`];
+
     return !!item && item.driveable;
   };
 
@@ -646,6 +700,21 @@ export default function GameCanvas() {
   // AUTOMATIC PEDESTRIAN SPAWNING
   // ====================================================
 
+  const choosePersonDestination = (agent: PersonAgent) => {
+    const angle = Math.random() * Math.PI * 2;
+    const radius = 2.5 + Math.random() * 5;
+
+    agent.tx = agent.homeX + Math.cos(angle) * radius;
+    agent.tz = agent.homeZ + Math.sin(angle) * radius;
+
+    agent.direction = Math.atan2(
+      agent.tx - agent.x,
+      agent.tz - agent.z
+    );
+
+    agent.progress = 0;
+  };
+
   const spawnPerson = useCallback((x: number, z: number) => {
     const scene = sceneRef.current;
 
@@ -688,21 +757,6 @@ export default function GameCanvas() {
     people.current.push(agent);
   }, []);
 
-  function choosePersonDestination(agent: PersonAgent) {
-    const angle = Math.random() * Math.PI * 2;
-    const radius = 2.5 + Math.random() * 5;
-
-    agent.tx = agent.homeX + Math.cos(angle) * radius;
-    agent.tz = agent.homeZ + Math.sin(angle) * radius;
-
-    agent.direction = Math.atan2(
-      agent.tx - agent.x,
-      agent.tz - agent.z
-    );
-
-    agent.progress = 0;
-  }
-
   // ====================================================
   // BUILDING PLACEMENT
   // ====================================================
@@ -744,7 +798,10 @@ export default function GameCanvas() {
       depth = 3;
     }
 
-    if (x + width > GRID_SIZE || z + depth > GRID_SIZE) {
+    if (
+      x + width > GRID_SIZE ||
+      z + depth > GRID_SIZE
+    ) {
       setMessage('Not enough building space');
       return;
     }
@@ -817,7 +874,6 @@ export default function GameCanvas() {
     if (category === 'building') {
       setPopulation((p) => p + 15);
 
-      // Pedestrians appear around new buildings.
       for (let i = 0; i < 4; i++) {
         spawnPerson(x, z);
       }
@@ -846,7 +902,6 @@ export default function GameCanvas() {
       category
     });
 
-    // A newly constructed road automatically creates a car.
     if (driveable) {
       spawnCar(x, z);
     }
@@ -886,7 +941,9 @@ export default function GameCanvas() {
 
     const nextLevel = currentLevel + 1;
 
-    const nextPath = `/models/buildings/level${nextLevel}.glb`;
+    const nextPath =
+      `/models/buildings/level${nextLevel}.glb`;
+
     const template = modelCache.current.get(nextPath);
 
     if (!template) {
@@ -896,7 +953,6 @@ export default function GameCanvas() {
 
     const group = item.mesh;
 
-    // Replace the model while preserving its position.
     group.clear();
 
     const upgradedModel = prepareModel(
@@ -910,7 +966,6 @@ export default function GameCanvas() {
     group.userData.level = nextLevel;
     group.userData.modelPath = nextPath;
 
-    // Update all four occupied tiles.
     Object.values(gridData.current).forEach((tile) => {
       if (tile.mesh === group) {
         tile.level = nextLevel;
@@ -920,7 +975,6 @@ export default function GameCanvas() {
     moneyRef.current -= cost;
     setMoney(moneyRef.current);
 
-    // Upgrade rewards
     setPopulation((p) => p + 20);
 
     setSelectedBuilding({
@@ -928,7 +982,9 @@ export default function GameCanvas() {
       level: nextLevel
     });
 
-    setMessage(`Building upgraded to Level ${nextLevel}!`);
+    setMessage(
+      `Building upgraded to Level ${nextLevel}!`
+    );
   };
 
   // ====================================================
@@ -938,7 +994,9 @@ export default function GameCanvas() {
   useEffect(() => {
     const interval = window.setInterval(() => {
       const buildings = new Set(
-        Object.values(gridData.current).map((item) => item.mesh)
+        Object.values(gridData.current).map(
+          (item) => item.mesh
+        )
       );
 
       let income = 0;
@@ -1001,7 +1059,10 @@ export default function GameCanvas() {
       Math.min(window.devicePixelRatio || 1, 1.75)
     );
 
-    renderer.setSize(mount.clientWidth, mount.clientHeight);
+    renderer.setSize(
+      mount.clientWidth,
+      mount.clientHeight
+    );
 
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -1014,10 +1075,17 @@ export default function GameCanvas() {
 
     // Lighting
     scene.add(
-      new THREE.HemisphereLight(0xddeeff, 0x42533f, 2)
+      new THREE.HemisphereLight(
+        0xddeeff,
+        0x42533f,
+        2
+      )
     );
 
-    const sunlight = new THREE.DirectionalLight(0xfff1d6, 3);
+    const sunlight = new THREE.DirectionalLight(
+      0xfff1d6,
+      3
+    );
 
     sunlight.position.set(-45, 80, 35);
     sunlight.castShadow = true;
@@ -1137,7 +1205,7 @@ export default function GameCanvas() {
     window.addEventListener('resize', handleResize);
 
     // ==================================================
-    // ANIMATION LOOP: CARS AND PEOPLE
+    // ANIMATION LOOP
     // ==================================================
 
     let animationId = 0;
@@ -1151,7 +1219,10 @@ export default function GameCanvas() {
       // CAR MOVEMENT
       cars.current.forEach((car) => {
         if (car.tx === car.x && car.tz === car.z) {
-          const neighbors = getRoadNeighbors(car.x, car.z);
+          const neighbors = getRoadNeighbors(
+            car.x,
+            car.z
+          );
 
           if (neighbors.length > 0) {
             const next = neighbors[
@@ -1172,24 +1243,14 @@ export default function GameCanvas() {
           car.x = car.tx;
           car.z = car.tz;
 
-          const neighbors = getRoadNeighbors(car.x, car.z).filter(
-            (next) => {
-              const nx = car.x + next.x;
-              const nz = car.z + next.z;
-
-              return !(nx === car.x - (car.tx - car.x) &&
-                nz === car.z - (car.tz - car.z));
-            }
+          const neighbors = getRoadNeighbors(
+            car.x,
+            car.z
           );
 
-          const available =
-            neighbors.length > 0
-              ? neighbors
-              : getRoadNeighbors(car.x, car.z);
-
-          if (available.length > 0) {
-            const next = available[
-              Math.floor(Math.random() * available.length)
+          if (neighbors.length > 0) {
+            const next = neighbors[
+              Math.floor(Math.random() * neighbors.length)
             ];
 
             car.tx = car.x + next.x;
@@ -1229,10 +1290,12 @@ export default function GameCanvas() {
         }
 
         person.mesh.position.x =
-          person.x + (person.tx - person.x) * person.progress;
+          person.x +
+          (person.tx - person.x) * person.progress;
 
         person.mesh.position.z =
-          person.z + (person.tz - person.z) * person.progress;
+          person.z +
+          (person.tz - person.z) * person.progress;
 
         person.mesh.rotation.y = person.direction;
       });
@@ -1249,7 +1312,10 @@ export default function GameCanvas() {
 
       cancelAnimationFrame(animationId);
 
-      window.removeEventListener('resize', handleResize);
+      window.removeEventListener(
+        'resize',
+        handleResize
+      );
 
       renderer.domElement.removeEventListener(
         'pointerdown',
@@ -1322,33 +1388,38 @@ export default function GameCanvas() {
         {/* ONE-LINE CATEGORY MENU */}
         <div className="flex w-max max-w-[96vw] items-center gap-1 overflow-x-auto rounded-xl border border-white/20 bg-slate-950/90 p-1.5 shadow-xl backdrop-blur-xl">
 
-          {(Object.keys(CATEGORIES) as Category[]).map((category) => (
-            <button
-              key={category}
-              onClick={() => {
-                if (activeCategory === category && menuOpen) {
-                  setMenuOpen(false);
-                  return;
-                }
+          {(Object.keys(CATEGORIES) as Category[]).map(
+            (category) => (
+              <button
+                key={category}
+                onClick={() => {
+                  if (
+                    activeCategory === category &&
+                    menuOpen
+                  ) {
+                    setMenuOpen(false);
+                    return;
+                  }
 
-                setActiveCategory(category);
-                setSelectedModel(null);
-                setSelectedBuilding(null);
-                setMenuOpen(true);
-              }}
-              className={`whitespace-nowrap rounded-lg px-3 py-2 text-[11px] font-bold uppercase transition sm:px-5 sm:text-sm ${
-                activeCategory === category && menuOpen
-                  ? 'bg-blue-600 text-white'
-                  : 'text-slate-300 hover:bg-white/10'
-              }`}
-            >
-              {CATEGORY_NAMES[category]}
-            </button>
-          ))}
+                  setActiveCategory(category);
+                  setSelectedModel(null);
+                  setSelectedBuilding(null);
+                  setMenuOpen(true);
+                }}
+                className={`whitespace-nowrap rounded-lg px-3 py-2 text-[11px] font-bold uppercase transition sm:px-5 sm:text-sm ${
+                  activeCategory === category && menuOpen
+                    ? 'bg-blue-600 text-white'
+                    : 'text-slate-300 hover:bg-white/10'
+                }`}
+              >
+                {CATEGORY_NAMES[category]}
+              </button>
+            )
+          )}
 
         </div>
 
-        {/* ONLY SHOW ITEMS AFTER CATEGORY CLICK */}
+        {/* SHOW ITEMS AFTER CATEGORY CLICK */}
         {menuOpen && (
           <div className="max-h-32 w-[94vw] max-w-3xl overflow-y-auto rounded-xl border border-white/20 bg-slate-950/95 p-2 shadow-2xl backdrop-blur-xl">
 
@@ -1365,7 +1436,10 @@ export default function GameCanvas() {
                     setSelectedModel(model);
                     setSelectedBuilding(null);
                     setMenuOpen(false);
-                    setMessage(`${model.name} selected. Tap the land to build.`);
+
+                    setMessage(
+                      `${model.name} selected. Tap the land to build.`
+                    );
                   }}
                   className={`rounded-lg border px-3 py-2 text-xs font-semibold transition ${
                     selectedModel?.path === model.path
@@ -1416,7 +1490,9 @@ export default function GameCanvas() {
                 <div
                   className="h-full rounded-full bg-gradient-to-r from-blue-500 to-green-400"
                   style={{
-                    width: `${selectedBuilding.level / 7 * 100}%`
+                    width: `${
+                      selectedBuilding.level / 7 * 100
+                    }%`
                   }}
                 />
               </div>
@@ -1465,6 +1541,7 @@ export default function GameCanvas() {
       {/* NOTIFICATION */}
       {message && (
         <div className="ui-panel absolute bottom-16 left-1/2 z-40 max-w-[85vw] -translate-x-1/2 rounded-xl border border-white/20 bg-slate-950/95 px-4 py-2.5 text-center text-xs font-semibold shadow-xl">
+
           {message}
 
           <button
@@ -1473,6 +1550,7 @@ export default function GameCanvas() {
           >
             ✕
           </button>
+
         </div>
       )}
 
