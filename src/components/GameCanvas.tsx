@@ -46,6 +46,8 @@ type CarAgent = {
   speed: number;
   previousX: number;
   previousZ: number;
+  heading: number;
+  targetHeading: number;
 };
 
 type PersonAgent = {
@@ -61,21 +63,29 @@ type PersonAgent = {
   direction: number;
 };
 
+type MovingItem = {
+  mesh: THREE.Group;
+  originalX: number;
+  originalZ: number;
+  width: number;
+  depth: number;
+  driveable: boolean;
+  category: Category;
+  level: number;
+};
+
 const CATEGORIES: Record<Category, ModelOption[]> = {
   road: [
     { name: 'Straight Road', path: '/models/roads/road.glb' },
     { name: 'Road Lamp', path: '/models/roads/road_lamp.glb' },
     { name: 'Traffic Sign', path: '/models/roads/road_traffic_sign.glb' }
   ],
-
   building: [
     { name: 'Building Level 1', path: '/models/buildings/level1.glb' }
   ],
-
   shop: [
     { name: 'Shop 1', path: '/models/shops/shop1.glb' }
   ],
-
   gov: [
     { name: 'Airport Buildings', path: '/models/gov/airport_buildings.glb' },
     { name: 'Control Tower', path: '/models/gov/airport_control_tower.glb' },
@@ -118,6 +128,13 @@ const CATEGORY_NAMES: Record<Category, string> = {
   building: 'Building',
   shop: 'Shop',
   gov: 'Government'
+};
+
+const POPULATION_VALUES: Record<Category, number> = {
+  road: 0,
+  building: 15,
+  shop: 8,
+  gov: 5
 };
 
 // ======================================================
@@ -175,7 +192,6 @@ function createFallbackModel(path: string): THREE.Group {
 
   if (path.includes('/population/')) {
     const id = Number(path.match(/population(\d+)/)?.[1] || 1);
-
     const colors = [0x2563eb, 0xdc6040, 0x16a36a, 0xb16ad8];
 
     const body = new THREE.Mesh(
@@ -198,33 +214,11 @@ function createFallbackModel(path: string): THREE.Group {
     return group;
   }
 
-  const isRoad = path.includes('/roads/');
-  const isGov = path.includes('/gov/');
-  const isShop = path.includes('/shops/');
+  if (path === '/models/roads/road.glb') {
+    return createRoadTile();
+  }
 
-  if (isRoad) {
-    const road = new THREE.Mesh(
-      new THREE.BoxGeometry(TILE_SIZE, 0.08, TILE_SIZE),
-      new THREE.MeshStandardMaterial({
-        color: 0x30343c,
-        roughness: 0.95
-      })
-    );
-
-    road.position.y = 0.04;
-    road.receiveShadow = true;
-    group.add(road);
-
-    if (path.endsWith('/road.glb')) {
-      const line = new THREE.Mesh(
-        new THREE.BoxGeometry(0.12, 0.025, 1.3),
-        new THREE.MeshBasicMaterial({ color: 0xf6d365 })
-      );
-
-      line.position.y = 0.095;
-      group.add(line);
-    }
-
+  if (path.includes('/roads/')) {
     if (path.includes('lamp')) {
       const pole = new THREE.Mesh(
         new THREE.CylinderGeometry(0.07, 0.1, 3.5, 10),
@@ -241,9 +235,7 @@ function createFallbackModel(path: string): THREE.Group {
 
       lamp.position.set(1.4, 3.6, 0);
       group.add(lamp);
-    }
-
-    if (path.includes('traffic_sign')) {
+    } else {
       const pole = new THREE.Mesh(
         new THREE.CylinderGeometry(0.06, 0.06, 2, 8),
         new THREE.MeshStandardMaterial({ color: 0x777777 })
@@ -263,6 +255,9 @@ function createFallbackModel(path: string): THREE.Group {
 
     return group;
   }
+
+  const isGov = path.includes('/gov/');
+  const isShop = path.includes('/shops/');
 
   const width = isGov ? 10 : isShop ? 6 : 7;
   const depth = isGov ? 10 : isShop ? 6 : 7;
@@ -328,6 +323,32 @@ function createFallbackModel(path: string): THREE.Group {
   return group;
 }
 
+function createRoadTile(): THREE.Group {
+  const group = new THREE.Group();
+
+  const asphalt = new THREE.Mesh(
+    new THREE.BoxGeometry(TILE_SIZE + 0.06, 0.10, TILE_SIZE + 0.06),
+    new THREE.MeshStandardMaterial({
+      color: 0x30343c,
+      roughness: 0.95
+    })
+  );
+
+  asphalt.position.y = 0.035;
+  asphalt.receiveShadow = true;
+  group.add(asphalt);
+
+  const centerLine = new THREE.Mesh(
+    new THREE.BoxGeometry(0.10, 0.015, TILE_SIZE * 0.48),
+    new THREE.MeshBasicMaterial({ color: 0xf6d365 })
+  );
+
+  centerLine.position.y = 0.092;
+  group.add(centerLine);
+
+  return group;
+}
+
 // ======================================================
 // MODEL NORMALIZATION
 // ======================================================
@@ -336,39 +357,71 @@ function prepareModel(
   template: THREE.Object3D,
   width: number,
   depth: number,
-  isRoad = false
+  maxHeight = 30
 ): THREE.Group {
   const root = new THREE.Group();
   const model = template.clone(true);
+
+  model.updateMatrixWorld(true);
 
   const bounds = new THREE.Box3().setFromObject(model);
   const size = bounds.getSize(new THREE.Vector3());
   const center = bounds.getCenter(new THREE.Vector3());
 
-  let scale: number;
+  const scale = Math.min(
+    width / Math.max(size.x, 0.01),
+    depth / Math.max(size.z, 0.01),
+    maxHeight / Math.max(size.y, 0.01)
+  );
 
-  if (isRoad) {
-    // Fit road exactly into one tile, not 88% of the tile.
-    // Keep horizontal dimensions independent from model height.
-    const sx = width / Math.max(size.x, 0.01);
-    const sz = depth / Math.max(size.z, 0.01);
-    model.scale.set(sx, Math.min(sx, sz), sz);
+  model.scale.multiplyScalar(scale);
+  model.position.x -= center.x * scale;
+  model.position.z -= center.z * scale;
+  model.position.y -= bounds.min.y * scale;
 
-    model.position.x = -center.x * sx;
-    model.position.z = -center.z * sz;
-    model.position.y = -bounds.min.y * Math.min(sx, sz);
-  } else {
-    scale = Math.min(
-      width / Math.max(size.x, 0.01),
-      depth / Math.max(size.z, 0.01)
-    );
+  model.traverse((object) => {
+    if (object instanceof THREE.Mesh) {
+      object.castShadow = true;
+      object.receiveShadow = true;
+    }
+  });
 
-    model.scale.multiplyScalar(scale);
+  root.add(model);
+  return root;
+}
 
-    model.position.x -= center.x * scale;
-    model.position.z -= center.z * scale;
-    model.position.y -= bounds.min.y * scale;
+/**
+ * Cars use local +Z as their forward direction.
+ * Their longest horizontal dimension is aligned with local Z.
+ */
+function prepareCarModel(template: THREE.Object3D): THREE.Group {
+  const root = new THREE.Group();
+  const model = template.clone(true);
+
+  model.updateMatrixWorld(true);
+
+  let bounds = new THREE.Box3().setFromObject(model);
+  let size = bounds.getSize(new THREE.Vector3());
+
+  if (size.x > size.z) {
+    model.rotation.y += Math.PI / 2;
+    model.updateMatrixWorld(true);
+    bounds = new THREE.Box3().setFromObject(model);
+    size = bounds.getSize(new THREE.Vector3());
   }
+
+  const scale = Math.min(
+    1.75 / Math.max(size.x, 0.01),
+    3.0 / Math.max(size.z, 0.01),
+    1.5 / Math.max(size.y, 0.01)
+  );
+
+  const center = bounds.getCenter(new THREE.Vector3());
+
+  model.scale.multiplyScalar(scale);
+  model.position.x -= center.x * scale;
+  model.position.z -= center.z * scale;
+  model.position.y -= bounds.min.y * scale;
 
   model.traverse((object) => {
     if (object instanceof THREE.Mesh) {
@@ -388,6 +441,22 @@ function worldPosition(x: number, z: number) {
   };
 }
 
+function gridKey(x: number, z: number) {
+  return `${x}-${z}`;
+}
+
+function getFootprint(category: Category) {
+  if (category === 'building' || category === 'shop') {
+    return { width: 2, depth: 2 };
+  }
+
+  if (category === 'gov') {
+    return { width: 3, depth: 3 };
+  }
+
+  return { width: 1, depth: 1 };
+}
+
 // ======================================================
 // MAIN COMPONENT
 // ======================================================
@@ -402,8 +471,10 @@ export default function GameCanvas() {
   const [activeCategory, setActiveCategory] = useState<Category>('road');
   const [menuOpen, setMenuOpen] = useState(false);
   const [selectedModel, setSelectedModel] = useState<ModelOption | null>(null);
-  const [selectedBuilding, setSelectedBuilding] = useState<BuildingSelection | null>(null);
+  const [selectedBuilding, setSelectedBuilding] =
+    useState<BuildingSelection | null>(null);
   const [message, setMessage] = useState('');
+  const [moveMode, setMoveMode] = useState(false);
 
   const sceneRef = useRef<THREE.Scene | null>(null);
   const modelCache = useRef<Map<string, THREE.Object3D>>(new Map());
@@ -415,8 +486,10 @@ export default function GameCanvas() {
   const selectedModelRef = useRef<ModelOption | null>(null);
   const activeCategoryRef = useRef<Category>('road');
   const moneyRef = useRef(100000);
+  const movingItemRef = useRef<MovingItem | null>(null);
 
   const placeBuildingRef = useRef<(x: number, z: number) => void>(() => {});
+  const moveBuildingRef = useRef<(x: number, z: number) => void>(() => {});
 
   selectedModelRef.current = selectedModel;
   activeCategoryRef.current = activeCategory;
@@ -446,13 +519,19 @@ export default function GameCanvas() {
         (gltf) => {
           if (active) modelCache.current.set(path, gltf.scene);
           completed++;
-          if (completed >= paths.length && active) setLoading(false);
+
+          if (completed >= paths.length && active) {
+            setLoading(false);
+          }
         },
         undefined,
         () => {
           if (active) modelCache.current.set(path, createFallbackModel(path));
           completed++;
-          if (completed >= paths.length && active) setLoading(false);
+
+          if (completed >= paths.length && active) {
+            setLoading(false);
+          }
         }
       );
     });
@@ -499,8 +578,7 @@ export default function GameCanvas() {
 
     const gridMaterial = grid.material as THREE.Material;
     gridMaterial.transparent = true;
-    gridMaterial.opacity = 0.2;
-
+    gridMaterial.opacity = 0.16;
     scene.add(grid);
 
     const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x65452e });
@@ -544,12 +622,12 @@ export default function GameCanvas() {
   // ROAD NETWORK
   // ====================================================
 
-  const isRoad = (x: number, z: number) => {
-    const item = gridData.current[`${x}-${z}`];
+  const isRoad = useCallback((x: number, z: number) => {
+    const item = gridData.current[gridKey(x, z)];
     return !!item && item.driveable;
-  };
+  }, []);
 
-  const getRoadNeighbors = (x: number, z: number) => {
+  const getRoadNeighbors = useCallback((x: number, z: number) => {
     const directions = [
       { x: 1, z: 0 },
       { x: -1, z: 0 },
@@ -560,10 +638,10 @@ export default function GameCanvas() {
     return directions.filter((direction) =>
       isRoad(x + direction.x, z + direction.z)
     );
-  };
+  }, [isRoad]);
 
   // ====================================================
-  // PEDESTRIAN DESTINATION
+  // PEDESTRIAN MOVEMENT
   // ====================================================
 
   const choosePersonDestination = (agent: PersonAgent) => {
@@ -582,6 +660,50 @@ export default function GameCanvas() {
   };
 
   // ====================================================
+  // CAR ROUTING
+  // ====================================================
+
+  const chooseCarNextTile = useCallback((car: CarAgent) => {
+    const neighbors = getRoadNeighbors(car.x, car.z);
+
+    if (neighbors.length === 0) {
+      car.tx = car.x;
+      car.tz = car.z;
+      return;
+    }
+
+    // Avoid immediately reversing when another road is available.
+    let choices = neighbors.filter(
+      (n) => !(car.x + n.x === car.previousX && car.z + n.z === car.previousZ)
+    );
+
+    if (choices.length === 0) {
+      choices = neighbors;
+    }
+
+    // Prefer continuing straight, then turn if necessary.
+    const currentDX = car.x - car.previousX;
+    const currentDZ = car.z - car.previousZ;
+
+    if (car.previousX >= 0) {
+      const straight = choices.filter(
+        (n) => n.x === currentDX && n.z === currentDZ
+      );
+
+      if (straight.length > 0 && Math.random() < 0.72) {
+        choices = straight;
+      }
+    }
+
+    const next = choices[Math.floor(Math.random() * choices.length)];
+
+    car.tx = car.x + next.x;
+    car.tz = car.z + next.z;
+
+    car.targetHeading = Math.atan2(next.x, next.z);
+  }, [getRoadNeighbors]);
+
+  // ====================================================
   // SPAWN CARS
   // ====================================================
 
@@ -589,14 +711,16 @@ export default function GameCanvas() {
     const scene = sceneRef.current;
     if (!scene || cars.current.length >= 35) return;
 
+    if (!isRoad(x, z)) return;
+
     const path = CAR_PATHS[Math.floor(Math.random() * CAR_PATHS.length)];
     const template = modelCache.current.get(path);
     if (!template) return;
 
-    const car = prepareModel(template, 2.7, 2.0);
+    const car = prepareCarModel(template);
     const position = worldPosition(x, z);
 
-    car.position.set(position.x, 0.14, position.z);
+    car.position.set(position.x, 0.12, position.z);
     scene.add(car);
 
     const agent: CarAgent = {
@@ -606,21 +730,16 @@ export default function GameCanvas() {
       tx: x,
       tz: z,
       progress: 0,
-      speed: 0.006 + Math.random() * 0.005,
+      speed: 0.018 + Math.random() * 0.008,
       previousX: -1,
-      previousZ: -1
+      previousZ: -1,
+      heading: 0,
+      targetHeading: 0
     };
 
-    const neighbors = getRoadNeighbors(x, z);
-
-    if (neighbors.length > 0) {
-      const next = neighbors[Math.floor(Math.random() * neighbors.length)];
-      agent.tx = x + next.x;
-      agent.tz = z + next.z;
-    }
-
     cars.current.push(agent);
-  }, []);
+    chooseCarNextTile(agent);
+  }, [isRoad, chooseCarNextTile]);
 
   // ====================================================
   // SPAWN PEOPLE
@@ -634,7 +753,7 @@ export default function GameCanvas() {
     const template = modelCache.current.get(path);
     if (!template) return;
 
-    const person = prepareModel(template, 0.65, 0.65);
+    const person = prepareModel(template, 0.8, 0.8, 1.8);
     const home = worldPosition(x, z);
 
     const startX = home.x + (Math.random() - 0.5) * 7;
@@ -652,13 +771,81 @@ export default function GameCanvas() {
       tx: startX,
       tz: startZ,
       progress: 0,
-      speed: 0.004 + Math.random() * 0.003,
+      speed: 0.012 + Math.random() * 0.006,
       direction: 0
     };
 
     choosePersonDestination(agent);
     people.current.push(agent);
   }, []);
+
+  // ====================================================
+  // OCCUPANCY HELPERS
+  // ====================================================
+
+  const hasSpace = (
+    x: number,
+    z: number,
+    width: number,
+    depth: number
+  ) => {
+    if (
+      x < 0 ||
+      z < 0 ||
+      x + width > GRID_SIZE ||
+      z + depth > GRID_SIZE
+    ) {
+      return false;
+    }
+
+    for (let dz = 0; dz < depth; dz++) {
+      for (let dx = 0; dx < width; dx++) {
+        if (gridData.current[gridKey(x + dx, z + dz)]) {
+          return false;
+        }
+      }
+    }
+
+    return true;
+  };
+
+  const addToGrid = (
+    group: THREE.Group,
+    x: number,
+    z: number,
+    width: number,
+    depth: number,
+    category: Category,
+    level: number,
+    driveable: boolean
+  ) => {
+    group.userData.gx = x;
+    group.userData.gz = z;
+    group.userData.width = width;
+    group.userData.depth = depth;
+    group.userData.level = level;
+    group.userData.category = category;
+    group.userData.cityItem = true;
+
+    for (let dz = 0; dz < depth; dz++) {
+      for (let dx = 0; dx < width; dx++) {
+        gridData.current[gridKey(x + dx, z + dz)] = {
+          level,
+          category,
+          mesh: group,
+          driveable
+        };
+      }
+    }
+  };
+
+  const removeFromGrid = (group: THREE.Group) => {
+    Object.keys(gridData.current).forEach((key) => {
+      if (gridData.current[key].mesh === group) {
+        delete gridData.current[key];
+      }
+    });
+  };
 
   // ====================================================
   // BUILDING PLACEMENT
@@ -671,8 +858,10 @@ export default function GameCanvas() {
 
     if (!model || !scene) return;
 
-    if (x < 0 || z < 0 || x >= GRID_SIZE || z >= GRID_SIZE) {
-      setMessage('Outside city limits');
+    const { width, depth } = getFootprint(category);
+
+    if (!hasSpace(x, z, width, depth)) {
+      setMessage('This location is occupied or outside city limits.');
       return;
     }
 
@@ -683,61 +872,43 @@ export default function GameCanvas() {
       return;
     }
 
-    let width = 1;
-    let depth = 1;
-
-    if (category === 'building' || category === 'shop') {
-      width = 2;
-      depth = 2;
-    }
-
-    if (category === 'gov') {
-      width = 3;
-      depth = 3;
-    }
-
-    if (x + width > GRID_SIZE || z + depth > GRID_SIZE) {
-      setMessage('Not enough building space');
-      return;
-    }
-
-    for (let dz = 0; dz < depth; dz++) {
-      for (let dx = 0; dx < width; dx++) {
-        if (gridData.current[`${x + dx}-${z + dz}`]) {
-          setMessage('This land is occupied');
-          return;
-        }
-      }
-    }
-
     const template = modelCache.current.get(model.path);
 
     if (!template) {
-      setMessage('Model is loading');
+      setMessage('Model is loading. Please wait.');
       return;
     }
 
     const group = new THREE.Group();
 
+    // A custom road tile guarantees a flat, seamless road surface.
     const isMainRoad =
       category === 'road' && model.path === '/models/roads/road.glb';
 
-    const modelGroup = prepareModel(
-      template,
-      width * TILE_SIZE,
-      depth * TILE_SIZE,
-      isMainRoad
+    if (isMainRoad) {
+      group.add(createRoadTile());
+    } else {
+      const maxHeight =
+        category === 'gov' ? 18 :
+        category === 'shop' ? 7 :
+        category === 'road' ? 5 : 30;
+
+      group.add(
+        prepareModel(
+          template,
+          width * TILE_SIZE * 0.92,
+          depth * TILE_SIZE * 0.92,
+          maxHeight
+        )
+      );
+    }
+
+    const position = worldPosition(
+      x + (width - 1) / 2,
+      z + (depth - 1) / 2
     );
 
-    group.add(modelGroup);
-
-    group.position.set(
-      (x - GRID_SIZE / 2) * TILE_SIZE + (width * TILE_SIZE) / 2,
-      isMainRoad ? 0.005 : 0.03,
-      (z - GRID_SIZE / 2) * TILE_SIZE + (depth * TILE_SIZE) / 2
-    );
-
-    const driveable = isMainRoad;
+    group.position.set(position.x, 0.02, position.z);
 
     group.userData = {
       cityItem: true,
@@ -752,16 +923,7 @@ export default function GameCanvas() {
 
     scene.add(group);
 
-    for (let dz = 0; dz < depth; dz++) {
-      for (let dx = 0; dx < width; dx++) {
-        gridData.current[`${x + dx}-${z + dz}`] = {
-          level: 1,
-          category,
-          mesh: group,
-          driveable
-        };
-      }
-    }
+    addToGrid(group, x, z, width, depth, category, 1, isMainRoad);
 
     moneyRef.current -= cost;
     setMoney(moneyRef.current);
@@ -769,33 +931,201 @@ export default function GameCanvas() {
     if (category === 'building') {
       setPopulation((p) => p + 15);
       for (let i = 0; i < 4; i++) spawnPerson(x, z);
-    }
-
-    if (category === 'shop') {
+    } else if (category === 'shop') {
       setPopulation((p) => p + 8);
       for (let i = 0; i < 3; i++) spawnPerson(x, z);
-    }
-
-    if (category === 'gov') {
+    } else if (category === 'gov') {
       setPopulation((p) => p + 5);
       for (let i = 0; i < 3; i++) spawnPerson(x, z);
     }
 
     setSelectedBuilding({ x, z, level: 1, category });
 
-    if (driveable) {
-      // Spawn a car when a road is constructed.
+    if (isMainRoad) {
       spawnCar(x, z);
     }
 
-    // IMPORTANT: consume the selected item after successful placement.
+    // One placement per selection.
     selectedModelRef.current = null;
     setSelectedModel(null);
 
-    setMessage(`${model.name} constructed! Select an item again to build more.`);
+    setMessage(`${model.name} constructed successfully.`);
   }, [spawnCar, spawnPerson]);
 
   placeBuildingRef.current = placeBuilding;
+
+  // ====================================================
+  // MOVE SELECTED ITEM
+  // ====================================================
+
+  const moveBuilding = useCallback((x: number, z: number) => {
+    const scene = sceneRef.current;
+    const moving = movingItemRef.current;
+
+    if (!scene || !moving) return;
+
+    if (!hasSpace(x, z, moving.width, moving.depth)) {
+      setMessage('Cannot move here. This land is occupied or outside city limits.');
+      return;
+    }
+
+    const position = worldPosition(
+      x + (moving.width - 1) / 2,
+      z + (moving.depth - 1) / 2
+    );
+
+    moving.mesh.position.set(position.x, 0.02, position.z);
+
+    scene.add(moving.mesh);
+
+    addToGrid(
+      moving.mesh,
+      x,
+      z,
+      moving.width,
+      moving.depth,
+      moving.category,
+      moving.level,
+      moving.driveable
+    );
+
+    movingItemRef.current = null;
+    setMoveMode(false);
+    setSelectedBuilding({
+      x,
+      z,
+      level: moving.level,
+      category: moving.category
+    });
+
+    // A moved road becomes a new vehicle starting point.
+    if (moving.driveable) {
+      spawnCar(x, z);
+    }
+
+    setMessage('Item moved successfully.');
+  }, [spawnCar]);
+
+  moveBuildingRef.current = moveBuilding;
+
+  const startMoving = () => {
+    if (!selectedBuilding) return;
+
+    const key = gridKey(selectedBuilding.x, selectedBuilding.z);
+    const item = gridData.current[key];
+
+    if (!item) return;
+
+    const group = item.mesh;
+    const width = group.userData.width as number;
+    const depth = group.userData.depth as number;
+
+    movingItemRef.current = {
+      mesh: group,
+      originalX: group.userData.gx as number,
+      originalZ: group.userData.gz as number,
+      width,
+      depth,
+      driveable: item.driveable,
+      category: item.category,
+      level: item.level
+    };
+
+    removeFromGrid(group);
+    sceneRef.current?.remove(group);
+
+    setSelectedBuilding(null);
+    setSelectedModel(null);
+    selectedModelRef.current = null;
+    setMoveMode(true);
+
+    setMessage('Tap an empty location to move this item. Use Cancel to stop.');
+  };
+
+  const cancelMoving = () => {
+    const scene = sceneRef.current;
+    const moving = movingItemRef.current;
+
+    if (!scene || !moving) return;
+
+    const position = worldPosition(
+      moving.originalX + (moving.width - 1) / 2,
+      moving.originalZ + (moving.depth - 1) / 2
+    );
+
+    moving.mesh.position.set(position.x, 0.02, position.z);
+    scene.add(moving.mesh);
+
+    addToGrid(
+      moving.mesh,
+      moving.originalX,
+      moving.originalZ,
+      moving.width,
+      moving.depth,
+      moving.category,
+      moving.level,
+      moving.driveable
+    );
+
+    movingItemRef.current = null;
+    setMoveMode(false);
+
+    setSelectedBuilding({
+      x: moving.originalX,
+      z: moving.originalZ,
+      level: moving.level,
+      category: moving.category
+    });
+
+    setMessage('Move cancelled.');
+  };
+
+  // ====================================================
+  // REMOVE SELECTED ITEM
+  // ====================================================
+
+  const removeSelected = () => {
+    if (!selectedBuilding) return;
+
+    const key = gridKey(selectedBuilding.x, selectedBuilding.z);
+    const item = gridData.current[key];
+
+    if (!item) return;
+
+    const group = item.mesh;
+    const category = item.category;
+
+    const refund = Math.floor(COSTS[category] * 0.5);
+    const populationLoss = POPULATION_VALUES[category];
+
+    removeFromGrid(group);
+    sceneRef.current?.remove(group);
+
+    // Remove cars that were on a road tile that no longer exists.
+    cars.current = cars.current.filter((car) => {
+      const currentRoadExists = isRoad(car.x, car.z);
+
+      if (!currentRoadExists) {
+        sceneRef.current?.remove(car.mesh);
+        return false;
+      }
+
+      return true;
+    });
+
+    moneyRef.current += refund;
+    setMoney(moneyRef.current);
+
+    if (populationLoss > 0) {
+      setPopulation((p) => Math.max(0, p - populationLoss));
+    }
+
+    setSelectedBuilding(null);
+
+    setMessage(
+      `${CATEGORY_NAMES[category]} removed. $${refund.toLocaleString()} refunded.`
+    );
+  };
 
   // ====================================================
   // BUILDING UPGRADES
@@ -818,7 +1148,7 @@ export default function GameCanvas() {
       return;
     }
 
-    const key = `${selectedBuilding.x}-${selectedBuilding.z}`;
+    const key = gridKey(selectedBuilding.x, selectedBuilding.z);
     const item = gridData.current[key];
 
     if (!item) return;
@@ -828,20 +1158,22 @@ export default function GameCanvas() {
     const template = modelCache.current.get(nextPath);
 
     if (!template) {
-      setMessage('Upgrade model unavailable');
+      setMessage('Upgrade model unavailable.');
       return;
     }
 
     const group = item.mesh;
     group.clear();
 
-    const upgradedModel = prepareModel(
-      template,
-      2 * TILE_SIZE * 0.95,
-      2 * TILE_SIZE * 0.95
+    group.add(
+      prepareModel(
+        template,
+        2 * TILE_SIZE * 0.92,
+        2 * TILE_SIZE * 0.92,
+        30
+      )
     );
 
-    group.add(upgradedModel);
     group.userData.level = nextLevel;
     group.userData.modelPath = nextPath;
 
@@ -853,7 +1185,11 @@ export default function GameCanvas() {
     setMoney(moneyRef.current);
     setPopulation((p) => p + 20);
 
-    setSelectedBuilding({ ...selectedBuilding, level: nextLevel });
+    setSelectedBuilding({
+      ...selectedBuilding,
+      level: nextLevel
+    });
+
     setMessage(`Building upgraded to Level ${nextLevel}!`);
   };
 
@@ -876,8 +1212,8 @@ export default function GameCanvas() {
       let income = 0;
 
       groups.forEach((group) => {
-        const category = group.userData.category;
-        const level = group.userData.level || 1;
+        const category = group.userData.category as Category;
+        const level = (group.userData.level as number) || 1;
 
         if (category === 'building') income += 15 * level;
         else if (category === 'shop') income += 30;
@@ -922,7 +1258,7 @@ export default function GameCanvas() {
       powerPreference: 'high-performance'
     });
 
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.6));
     renderer.setSize(mount.clientWidth, mount.clientHeight);
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -947,15 +1283,22 @@ export default function GameCanvas() {
 
     addEnvironment(scene);
 
+    // Smoother camera controls.
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
-    controls.dampingFactor = 0.06;
-    controls.target.set(0, 0, 0);
-    controls.minDistance = 18;
-    controls.maxDistance = 145;
-    controls.maxPolarAngle = Math.PI / 2.05;
+    controls.dampingFactor = 0.09;
+    controls.rotateSpeed = 0.65;
+    controls.panSpeed = 0.7;
+    controls.zoomSpeed = 0.75;
+    controls.enableZoom = true;
     controls.enablePan = true;
-
+    controls.enableRotate = true;
+    controls.screenSpacePanning = false;
+    controls.minDistance = 15;
+    controls.maxDistance = 145;
+    controls.minPolarAngle = 0.18;
+    controls.maxPolarAngle = Math.PI / 2.08;
+    controls.target.set(0, 0, 0);
     controls.touches = {
       ONE: THREE.TOUCH.PAN,
       TWO: THREE.TOUCH.DOLLY_ROTATE
@@ -964,9 +1307,36 @@ export default function GameCanvas() {
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
 
+    let pointerDownX = 0;
+    let pointerDownY = 0;
+    let pointerMoved = false;
+
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as HTMLElement;
 
+      if (target.closest('.ui-panel')) {
+        pointerMoved = true;
+        return;
+      }
+
+      pointerDownX = event.clientX;
+      pointerDownY = event.clientY;
+      pointerMoved = false;
+    };
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const dx = event.clientX - pointerDownX;
+      const dy = event.clientY - pointerDownY;
+
+      if (Math.sqrt(dx * dx + dy * dy) > 7) {
+        pointerMoved = true;
+      }
+    };
+
+    const handlePointerUp = (event: PointerEvent) => {
+      if (pointerMoved) return;
+
+      const target = event.target as HTMLElement;
       if (target.closest('.ui-panel')) return;
 
       const rect = renderer.domElement.getBoundingClientRect();
@@ -981,12 +1351,23 @@ export default function GameCanvas() {
       for (const hit of intersects) {
         let current: THREE.Object3D | null = hit.object;
 
+        // Check whether the hit belongs to a placed city item.
         while (current && current !== scene) {
           if (current.userData.cityItem) {
+            const gx = current.userData.gx as number;
+            const gz = current.userData.gz as number;
+
+            if (moveMode && movingItemRef.current) {
+              setMessage('Choose an empty location to move the item.');
+              return;
+            }
+
+            setSelectedModel(null);
+            selectedModelRef.current = null;
             setSelectedBuilding({
-              x: current.userData.gx,
-              z: current.userData.gz,
-              level: current.userData.level,
+              x: gx,
+              z: gz,
+              level: current.userData.level || 1,
               category: current.userData.category
             });
 
@@ -996,22 +1377,33 @@ export default function GameCanvas() {
           current = current.parent;
         }
 
-        if (hit.object.userData.isGround) {
-          const gx = Math.floor((hit.point.x + HALF_WORLD) / TILE_SIZE);
-          const gz = Math.floor((hit.point.z + HALF_WORLD) / TILE_SIZE);
+        // Check ground, including its direct mesh.
+        let groundObject: THREE.Object3D | null = hit.object;
 
-          if (selectedModelRef.current) {
-            placeBuildingRef.current(gx, gz);
-          } else {
-            setSelectedBuilding(null);
+        while (groundObject && groundObject !== scene) {
+          if (groundObject.userData.isGround) {
+            const gx = Math.floor((hit.point.x + HALF_WORLD) / TILE_SIZE);
+            const gz = Math.floor((hit.point.z + HALF_WORLD) / TILE_SIZE);
+
+            if (moveMode && movingItemRef.current) {
+              moveBuildingRef.current(gx, gz);
+            } else if (selectedModelRef.current) {
+              placeBuildingRef.current(gx, gz);
+            } else {
+              setSelectedBuilding(null);
+            }
+
+            return;
           }
 
-          return;
+          groundObject = groundObject.parent;
         }
       }
     };
 
     renderer.domElement.addEventListener('pointerdown', handlePointerDown);
+    renderer.domElement.addEventListener('pointermove', handlePointerMove);
+    renderer.domElement.addEventListener('pointerup', handlePointerUp);
 
     const handleResize = () => {
       const width = mount.clientWidth;
@@ -1032,65 +1424,76 @@ export default function GameCanvas() {
 
     let animationId = 0;
     let active = true;
+    let previousTime = 0;
 
-    const animate = () => {
+    const animate = (time: number) => {
       if (!active) return;
 
       animationId = requestAnimationFrame(animate);
 
+      const delta = previousTime === 0
+        ? 1
+        : Math.min((time - previousTime) / 16.67, 2);
+
+      previousTime = time;
+
       // CAR MOVEMENT
       cars.current.forEach((car) => {
-        if (car.tx === car.x && car.tz === car.z) {
-          const neighbors = getRoadNeighbors(car.x, car.z);
-
-          if (neighbors.length > 0) {
-            const next = neighbors[Math.floor(Math.random() * neighbors.length)];
-            car.tx = car.x + next.x;
-            car.tz = car.z + next.z;
-          }
-
+        if (!isRoad(car.x, car.z)) {
+          scene.remove(car.mesh);
           return;
         }
 
-        car.progress += car.speed;
-
-        if (car.progress >= 1) {
-          car.progress = 0;
-          car.previousX = car.x;
-          car.previousZ = car.z;
-          car.x = car.tx;
-          car.z = car.tz;
-
-          const neighbors = getRoadNeighbors(car.x, car.z).filter(
-            (n) => !(car.x + n.x === car.previousX && car.z + n.z === car.previousZ)
-          );
-
-          const available = neighbors.length > 0 ? neighbors : getRoadNeighbors(car.x, car.z);
-
-          if (available.length > 0) {
-            const next = available[Math.floor(Math.random() * available.length)];
-            car.tx = car.x + next.x;
-            car.tz = car.z + next.z;
-          } else {
-            car.tx = car.x;
-            car.tz = car.z;
-          }
+        if (car.tx === car.x && car.tz === car.z) {
+          chooseCarNextTile(car);
         }
 
-        const start = worldPosition(car.x, car.z);
-        const end = worldPosition(car.tx, car.tz);
-
-        car.mesh.position.x = start.x + (end.x - start.x) * car.progress;
-        car.mesh.position.z = start.z + (end.z - start.z) * car.progress;
-
         if (car.tx !== car.x || car.tz !== car.z) {
-          car.mesh.rotation.y = Math.atan2(end.x - start.x, end.z - start.z);
+          car.progress += car.speed * delta;
+
+          const start = worldPosition(car.x, car.z);
+          const end = worldPosition(car.tx, car.tz);
+
+          const dx = end.x - start.x;
+          const dz = end.z - start.z;
+
+          car.mesh.position.x = start.x + dx * car.progress;
+          car.mesh.position.z = start.z + dz * car.progress;
+
+          // +Z is the vehicle's forward direction.
+          car.targetHeading = Math.atan2(dx, dz);
+
+          // Smoothly rotate instead of snapping at corners.
+          const current = car.heading;
+          let difference = car.targetHeading - current;
+
+          while (difference > Math.PI) difference -= Math.PI * 2;
+          while (difference < -Math.PI) difference += Math.PI * 2;
+
+          car.heading += difference * Math.min(0.16 * delta, 1);
+          car.mesh.rotation.y = car.heading;
+
+          if (car.progress >= 1) {
+            car.progress = 0;
+            car.previousX = car.x;
+            car.previousZ = car.z;
+            car.x = car.tx;
+            car.z = car.tz;
+
+            chooseCarNextTile(car);
+          }
+        } else {
+          car.mesh.position.x = worldPosition(car.x, car.z).x;
+          car.mesh.position.z = worldPosition(car.x, car.z).z;
         }
       });
 
+      // Remove cars whose road was deleted.
+      cars.current = cars.current.filter((car) => isRoad(car.x, car.z));
+
       // PEDESTRIAN MOVEMENT
       people.current.forEach((person) => {
-        person.progress += person.speed;
+        person.progress += person.speed * delta;
 
         if (person.progress >= 1) {
           person.x = person.tx;
@@ -1098,8 +1501,12 @@ export default function GameCanvas() {
           choosePersonDestination(person);
         }
 
-        person.mesh.position.x = person.x + (person.tx - person.x) * person.progress;
-        person.mesh.position.z = person.z + (person.tz - person.z) * person.progress;
+        person.mesh.position.x =
+          person.x + (person.tx - person.x) * person.progress;
+
+        person.mesh.position.z =
+          person.z + (person.tz - person.z) * person.progress;
+
         person.mesh.rotation.y = person.direction;
       });
 
@@ -1107,7 +1514,7 @@ export default function GameCanvas() {
       renderer.render(scene, camera);
     };
 
-    animate();
+    animate(0);
 
     return () => {
       active = false;
@@ -1116,6 +1523,8 @@ export default function GameCanvas() {
       window.removeEventListener('resize', handleResize);
 
       renderer.domElement.removeEventListener('pointerdown', handlePointerDown);
+      renderer.domElement.removeEventListener('pointermove', handlePointerMove);
+      renderer.domElement.removeEventListener('pointerup', handlePointerUp);
 
       controls.dispose();
       renderer.dispose();
@@ -1128,9 +1537,10 @@ export default function GameCanvas() {
       cars.current = [];
       people.current = [];
       gridData.current = {};
+      movingItemRef.current = null;
       sceneRef.current = null;
     };
-  }, []);
+  }, [moveMode, isRoad, chooseCarNextTile]);
 
   // ====================================================
   // USER INTERFACE
@@ -1138,11 +1548,8 @@ export default function GameCanvas() {
 
   return (
     <main className="relative h-dvh w-full overflow-hidden bg-slate-950 text-white">
-
-      {/* 3D GAME */}
       <div ref={mountRef} className="absolute inset-0 h-full w-full" />
 
-      {/* LOADING */}
       {loading && (
         <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-slate-950">
           <div className="mb-5 h-12 w-12 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
@@ -1151,9 +1558,8 @@ export default function GameCanvas() {
         </div>
       )}
 
-      {/* SINGLE LINE TOP HUD */}
-      <div className="ui-panel absolute left-1/2 top-2 z-20 flex max-w-[99vw] -translate-x-1/2 items-center gap-1 rounded-xl border border-white/20 bg-slate-950/90 p-1 shadow-xl backdrop-blur-xl">
-
+      {/* TOP HUD */}
+      <div className="ui-panel absolute left-1/2 top-2 z-20 flex max-w-[99vw] -translate-x-1/2 items-center gap-1 overflow-x-auto rounded-xl border border-white/20 bg-slate-950/90 p-1 shadow-xl backdrop-blur-xl">
         <span className="whitespace-nowrap px-2 text-[10px] font-bold text-green-400 sm:text-sm">
           💰 ${money.toLocaleString()}
         </span>
@@ -1195,14 +1601,14 @@ export default function GameCanvas() {
         ))}
       </div>
 
-      {/* CATEGORY ITEM MENU */}
+      {/* CATEGORY ITEMS */}
       {menuOpen && (
         <div className="ui-panel absolute left-1/2 top-14 z-20 w-[96vw] max-w-3xl -translate-x-1/2 rounded-xl border border-white/20 bg-slate-950/95 p-2 shadow-2xl backdrop-blur-xl">
           <div className="mb-2 text-center text-[10px] font-bold uppercase tracking-widest text-slate-400">
             {CATEGORY_NAMES[activeCategory]} Items
           </div>
 
-          <div className="flex flex-wrap justify-center gap-2">
+          <div className="flex max-h-[25vh] flex-wrap justify-center gap-2 overflow-y-auto">
             {CATEGORIES[activeCategory].map((model) => (
               <button
                 key={model.path}
@@ -1211,7 +1617,7 @@ export default function GameCanvas() {
                   selectedModelRef.current = model;
                   setSelectedBuilding(null);
                   setMenuOpen(false);
-                  setMessage(`${model.name} selected. Tap the land to build.`);
+                  setMessage(`${model.name} selected. Tap empty land to build.`);
                 }}
                 className="rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700"
               >
@@ -1222,10 +1628,29 @@ export default function GameCanvas() {
         </div>
       )}
 
-      {/* BUILDING UPGRADE PANEL */}
-      {selectedBuilding && (
-        <div className="ui-panel absolute right-3 top-16 z-30 w-60 max-w-[72vw] rounded-xl border border-white/20 bg-slate-950/95 p-3 shadow-2xl backdrop-blur-xl">
+      {/* MOVE MODE PANEL */}
+      {moveMode && (
+        <div className="ui-panel absolute left-1/2 top-16 z-30 w-[90vw] max-w-sm -translate-x-1/2 rounded-xl border border-blue-400/40 bg-slate-950/95 p-3 text-center shadow-2xl">
+          <p className="text-sm font-bold text-blue-300">
+            MOVE MODE
+          </p>
 
+          <p className="mt-1 text-xs text-slate-300">
+            Tap an empty location on the map to place the selected item.
+          </p>
+
+          <button
+            onClick={cancelMoving}
+            className="mt-3 rounded-lg bg-red-600 px-5 py-2 text-xs font-bold hover:bg-red-500"
+          >
+            CANCEL MOVE
+          </button>
+        </div>
+      )}
+
+      {/* SELECTED ITEM PANEL */}
+      {selectedBuilding && !moveMode && (
+        <div className="ui-panel absolute right-3 top-16 z-30 w-60 max-w-[75vw] rounded-xl border border-white/20 bg-slate-950/95 p-3 shadow-2xl backdrop-blur-xl">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-sm font-bold">
               {CATEGORY_NAMES[selectedBuilding.category]}
@@ -1239,7 +1664,7 @@ export default function GameCanvas() {
             </button>
           </div>
 
-          {selectedBuilding.category === 'building' ? (
+          {selectedBuilding.category === 'building' && (
             <>
               <div className="mb-3 flex justify-between text-xs">
                 <span className="text-slate-400">Building Level</span>
@@ -1251,7 +1676,9 @@ export default function GameCanvas() {
               <div className="mb-3 h-2 overflow-hidden rounded-full bg-slate-700">
                 <div
                   className="h-full rounded-full bg-gradient-to-r from-blue-500 to-green-400"
-                  style={{ width: `${selectedBuilding.level / 7 * 100}%` }}
+                  style={{
+                    width: `${selectedBuilding.level / 7 * 100}%`
+                  }}
                 />
               </div>
 
@@ -1265,18 +1692,36 @@ export default function GameCanvas() {
               >
                 {selectedBuilding.level >= 7
                   ? 'MAX LEVEL'
-                  : `⬆ UPGRADE - $${(selectedBuilding.level * 1000).toLocaleString()}`}
+                  : `⬆ UPGRADE - $${(
+                      selectedBuilding.level * 1000
+                    ).toLocaleString()}`}
               </button>
 
               <p className="mt-2 text-center text-[10px] text-green-400">
                 +20 population per upgrade
               </p>
             </>
-          ) : (
-            <p className="text-center text-xs text-slate-400">
-              This item does not support upgrades.
-            </p>
           )}
+
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <button
+              onClick={startMoving}
+              className="rounded-lg bg-amber-600 py-2 text-xs font-bold hover:bg-amber-500"
+            >
+              ↔ MOVE
+            </button>
+
+            <button
+              onClick={removeSelected}
+              className="rounded-lg bg-red-700 py-2 text-xs font-bold hover:bg-red-600"
+            >
+              ✕ REMOVE
+            </button>
+          </div>
+
+          <p className="mt-2 text-center text-[9px] text-slate-400">
+            Remove refunds 50% of the original construction cost.
+          </p>
         </div>
       )}
 
@@ -1287,7 +1732,9 @@ export default function GameCanvas() {
         </p>
 
         <p className="text-xs font-bold text-green-400">
-          {selectedModel?.name || 'Select a menu item'}
+          {moveMode
+            ? 'Moving item'
+            : selectedModel?.name || 'Select a menu item'}
         </p>
       </div>
 
@@ -1304,7 +1751,6 @@ export default function GameCanvas() {
           </button>
         </div>
       )}
-
     </main>
   );
 }
