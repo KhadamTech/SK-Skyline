@@ -1,5 +1,5 @@
 
-name: SK Skyline Android Build
+name: SK Skyline Android Release Build
 
 on:
   push:
@@ -13,29 +13,34 @@ permissions:
 
 jobs:
   build:
-    name: Build SK Skyline APK
+    name: Build Signed APK and Play Store AAB
     runs-on: ubuntu-latest
 
+    env:
+      KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+
     steps:
-      # 1. Download repository
+      # 1. Checkout repository
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 2. Configure Node.js
+      # 2. Setup Node.js
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
 
-      # 3. Configure Java
+      # 3. Setup Java
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
 
-      # 4. Configure Android SDK without obsolete tools package
+      # 4. Setup Android SDK
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
         with:
@@ -43,7 +48,7 @@ jobs:
           accept-android-sdk-licenses: 'true'
           log-accepted-android-sdk-licenses: 'false'
 
-      # 5. Install required Android SDK packages
+      # 5. Install Android SDK 36
       - name: Install Android SDK 36
         run: |
           sdkmanager --install \
@@ -51,33 +56,70 @@ jobs:
             "platforms;android-36" \
             "build-tools;36.0.0"
 
-      # 6. Install project dependencies
-      - name: Install Node Dependencies
-        run: npm install --no-audit --no-fund
-
-      # 7. Build Next.js game
-      - name: Build Next.js Game
-        run: npm run build
-
-      # 8. Verify exported game
-      - name: Verify Static Game Files
+      # 6. Verify release signing configuration
+      - name: Verify Release Keystore and Secrets
         run: |
-          if [ ! -f out/index.html ]; then
-            echo "ERROR: Next.js export failed."
+          set -e
+
+          if [ ! -f "src/release_key.jks" ]; then
+            echo "ERROR: src/release_key.jks was not found."
             exit 1
           fi
 
-          echo "SK Skyline static game export verified."
+          if [ -z "$KEYSTORE_PASSWORD" ]; then
+            echo "ERROR: KEYSTORE_PASSWORD secret is missing."
+            exit 1
+          fi
 
-      # 9. Generate Android project
+          if [ -z "$KEY_PASSWORD" ]; then
+            echo "ERROR: KEY_PASSWORD secret is missing."
+            exit 1
+          fi
+
+          if [ -z "$KEY_ALIAS" ]; then
+            echo "ERROR: KEY_ALIAS secret is missing."
+            exit 1
+          fi
+
+          echo "Release keystore and signing secrets are configured."
+
+          keytool -list \
+            -keystore src/release_key.jks \
+            -storepass "$KEYSTORE_PASSWORD" \
+            -alias "$KEY_ALIAS" \
+            > /dev/null
+
+          echo "Keystore alias verified."
+
+      # 7. Install Node dependencies
+      - name: Install Node Dependencies
+        run: npm install --no-audit --no-fund
+
+      # 8. Build Next.js game
+      - name: Build Next.js Game
+        run: npm run build
+
+      # 9. Verify static export
+      - name: Verify Static Game Files
+        run: |
+          set -e
+
+          if [ ! -f "out/index.html" ]; then
+            echo "ERROR: Next.js static export failed."
+            exit 1
+          fi
+
+          echo "SK Skyline static export verified."
+
+      # 10. Generate Android project
       - name: Add Android Platform
         run: npx cap add android
 
-      # 10. Sync Capacitor
+      # 11. Sync Capacitor
       - name: Sync Capacitor
         run: npx cap sync android
 
-      # 11. Configure Android SDK versions
+      # 12. Configure Android SDK versions
       - name: Configure Android SDK Versions
         run: |
           python3 - <<'PY'
@@ -121,7 +163,7 @@ jobs:
           print("Target SDK: 36")
           PY
 
-      # 12. Configure landscape orientation
+      # 13. Configure landscape orientation
       - name: Set Android Landscape Orientation
         run: |
           python3 - <<'PY'
@@ -177,35 +219,198 @@ jobs:
           print("Landscape orientation configured.")
           PY
 
-      # 13. Build Android APK
-      - name: Build Android APK
+      # 14. Configure release signing
+      - name: Configure Android Release Signing
         working-directory: android
         run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("app/build.gradle")
+
+          if not path.exists():
+              raise SystemExit(
+                  "ERROR: android/app/build.gradle not found."
+              )
+
+          content = path.read_text()
+
+          if "signingConfigs" in content:
+              raise SystemExit(
+                  "ERROR: Signing configuration already exists. "
+                  "Check the generated Gradle file."
+              )
+
+          android_start = content.find("android")
+
+          if android_start < 0:
+              raise SystemExit(
+                  "ERROR: Android Gradle block not found."
+              )
+
+          android_open = content.find("{", android_start)
+
+          if android_open < 0:
+              raise SystemExit(
+                  "ERROR: Android Gradle block is invalid."
+              )
+
+          signing_config = """
+              signingConfigs {
+                  release {
+                      storeFile rootProject.file("../src/release_key.jks")
+                      storePassword System.getenv("KEYSTORE_PASSWORD")
+                      keyAlias System.getenv("KEY_ALIAS")
+                      keyPassword System.getenv("KEY_PASSWORD")
+                  }
+              }
+
+          """
+
+          content = (
+              content[:android_open + 1]
+              + signing_config
+              + content[android_open + 1:]
+          )
+
+          # Find buildTypes block.
+          build_types_start = content.find("buildTypes")
+
+          if build_types_start < 0:
+              raise SystemExit(
+                  "ERROR: buildTypes block not found."
+              )
+
+          build_types_open = content.find("{", build_types_start)
+
+          def find_matching_brace(text, opening):
+              depth = 0
+              for index in range(opening, len(text)):
+                  if text[index] == "{":
+                      depth += 1
+                  elif text[index] == "}":
+                      depth -= 1
+                      if depth == 0:
+                          return index
+              return -1
+
+          build_types_close = find_matching_brace(
+              content,
+              build_types_open
+          )
+
+          if build_types_close < 0:
+              raise SystemExit(
+                  "ERROR: Invalid buildTypes block."
+              )
+
+          build_types = content[
+              build_types_open:build_types_close + 1
+          ]
+
+          release_start = build_types.find("release")
+
+          if release_start < 0:
+              raise SystemExit(
+                  "ERROR: release build type not found."
+              )
+
+          release_open = build_types.find("{", release_start)
+
+          release_close = find_matching_brace(
+              build_types,
+              release_open
+          )
+
+          if release_close < 0:
+              raise SystemExit(
+                  "ERROR: Invalid release build type."
+              )
+
+          release_block = build_types[
+              release_open + 1:release_close
+          ]
+
+          if "signingConfig" not in release_block:
+              release_block = (
+                  "\n                    signingConfig signingConfigs.release\n"
+                  + release_block
+              )
+
+          updated_build_types = (
+              build_types[:release_open + 1]
+              + release_block
+              + build_types[release_close:]
+          )
+
+          content = (
+              content[:build_types_start]
+              + updated_build_types
+              + content[build_types_close + 1:]
+          )
+
+          path.write_text(content)
+
+          print("Release signing configured.")
+          print("Keystore: src/release_key.jks")
+          PY
+
+      # 15. Build signed release APK and AAB
+      - name: Build Signed Release APK and AAB
+        working-directory: android
+        run: |
+          set -e
+
           chmod +x gradlew
 
           ./gradlew \
             --no-daemon \
             --stacktrace \
-            assembleDebug
+            clean \
+            assembleRelease \
+            bundleRelease
 
-      # 14. Verify APK
-      - name: Verify APK
+      # 16. Verify release APK
+      - name: Verify Signed Release APK
         run: |
-          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          set -e
+
+          APK="android/app/build/outputs/apk/release/app-release.apk"
 
           if [ ! -f "$APK" ]; then
-            echo "ERROR: APK was not generated."
+            echo "ERROR: Release APK was not generated."
             exit 1
           fi
 
-          ls -lh "$APK"
-          echo "SK Skyline APK successfully generated."
+          apksigner verify --verbose "$APK"
 
-      # 15. Upload APK
-      - name: Upload APK Artifact
+          echo "Signed release APK verified."
+          ls -lh "$APK"
+
+      # 17. Verify Play Store AAB
+      - name: Verify Signed Play Store AAB
+        run: |
+          set -e
+
+          AAB="android/app/build/outputs/bundle/release/app-release.aab"
+
+          if [ ! -f "$AAB" ]; then
+            echo "ERROR: Release AAB was not generated."
+            exit 1
+          fi
+
+          jarsigner -verify "$AAB"
+
+          echo "Signed Play Store AAB verified."
+          ls -lh "$AAB"
+
+      # 18. Upload release APK and AAB
+      - name: Upload Release APK and AAB
         uses: actions/upload-artifact@v4
         with:
-          name: SK-Skyline-Android-APK
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: SK-Skyline-Android-Release
+          path: |
+            android/app/build/outputs/apk/release/app-release.apk
+            android/app/build/outputs/bundle/release/app-release.aab
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
