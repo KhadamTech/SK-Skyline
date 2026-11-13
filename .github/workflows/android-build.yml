@@ -56,30 +56,30 @@ jobs:
             "platforms;android-36" \
             "build-tools;36.0.0"
 
-      # 6. Verify keystore and signing secrets
+      # 6. Verify release keystore and secrets
       - name: Verify Release Keystore
         run: |
           set -e
 
-          test -f "src/release_key.jks" || {
+          if [ ! -f "src/release_key.jks" ]; then
             echo "ERROR: src/release_key.jks not found."
             exit 1
-          }
+          fi
 
-          test -n "$KEYSTORE_PASSWORD" || {
+          if [ -z "$KEYSTORE_PASSWORD" ]; then
             echo "ERROR: KEYSTORE_PASSWORD secret is missing."
             exit 1
-          }
+          fi
 
-          test -n "$KEY_PASSWORD" || {
+          if [ -z "$KEY_PASSWORD" ]; then
             echo "ERROR: KEY_PASSWORD secret is missing."
             exit 1
-          }
+          fi
 
-          test -n "$KEY_ALIAS" || {
+          if [ -z "$KEY_ALIAS" ]; then
             echo "ERROR: KEY_ALIAS secret is missing."
             exit 1
-          }
+          fi
 
           keytool -list \
             -keystore src/release_key.jks \
@@ -97,7 +97,7 @@ jobs:
       - name: Build Next.js Game
         run: npm run build
 
-      # 9. Verify static export
+      # 9. Verify static game files
       - name: Verify Static Game Files
         run: |
           set -e
@@ -107,7 +107,7 @@ jobs:
             exit 1
           fi
 
-          echo "Static game export verified."
+          echo "SK Skyline static export verified."
 
       # 10. Add Android platform
       - name: Add Android Platform
@@ -217,7 +217,7 @@ jobs:
           print("Landscape orientation configured.")
           PY
 
-      # 14. Configure release signing safely
+      # 14. Configure release signing
       - name: Configure Android Release Signing
         working-directory: android
         run: |
@@ -229,7 +229,7 @@ jobs:
 
           if not path.exists():
               raise SystemExit(
-                  "ERROR: android/app/build.gradle not found."
+                  "ERROR: app/build.gradle not found."
               )
 
           content = path.read_text()
@@ -243,12 +243,6 @@ jobs:
                   )
 
               opening = text.find("{", match.start())
-
-              if opening < 0:
-                  raise SystemExit(
-                      "ERROR: Opening brace not found."
-                  )
-
               depth = 0
               quote = None
               escaped = False
@@ -303,24 +297,23 @@ jobs:
                       depth += 1
                   elif char == "}":
                       depth -= 1
-
                       if depth == 0:
                           return opening, i
 
                   i += 1
 
               raise SystemExit(
-                  "ERROR: Unbalanced braces in Gradle file."
+                  "ERROR: Unbalanced Gradle braces."
               )
 
-          # Find the Android block.
+          # Find Android block.
           android_open, android_close = find_block(
               content,
               r"(?m)^\s*android\s*\{"
           )
 
-          # Add signing configuration inside android.
-          if "signingConfigs" not in content:
+          # Insert release signing configuration.
+          if not re.search(r"\bsigningConfigs\s*\{", content):
               signing_config = """
               signingConfigs {
                   release {
@@ -340,7 +333,7 @@ jobs:
                   + content[android_open + 1:]
               )
 
-          # Re-find buildTypes after modifying the file.
+          # Find buildTypes.
           build_open, build_close = find_block(
               content,
               r"\bbuildTypes\s*\{"
@@ -348,7 +341,7 @@ jobs:
 
           build_types = content[build_open:build_close + 1]
 
-          # Find release block inside buildTypes.
+          # Find release configuration inside buildTypes.
           release_open_relative, release_close_relative = find_block(
               build_types,
               r"\brelease\s*\{"
@@ -361,24 +354,20 @@ jobs:
               release_open:release_close + 1
           ]
 
-          if "signingConfig" not in release_block:
-              insertion = (
-                  "\n                    signingConfig signingConfigs.release\n"
-              )
-
+          if not re.search(r"\bsigningConfig\b", release_block):
               content = (
                   content[:release_open + 1]
-                  + insertion
+                  + "\n                    signingConfig signingConfigs.release\n"
                   + content[release_open + 1:]
               )
 
           path.write_text(content)
 
-          print("Release signing configured successfully.")
+          print("Release signing configured.")
           print("Keystore: src/release_key.jks")
           PY
 
-      # 15. Build signed release APK and AAB
+      # 15. Build release APK and AAB
       - name: Build Signed Release APK and AAB
         working-directory: android
         run: |
@@ -399,13 +388,19 @@ jobs:
           set -e
 
           APK="android/app/build/outputs/apk/release/app-release.apk"
+          APKSIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
 
           if [ ! -f "$APK" ]; then
             echo "ERROR: Release APK was not generated."
             exit 1
           fi
 
-          apksigner verify --verbose "$APK"
+          if [ ! -f "$APKSIGNER" ]; then
+            echo "ERROR: apksigner was not found."
+            exit 1
+          fi
+
+          "$APKSIGNER" verify --verbose "$APK"
 
           echo "Signed release APK verified."
           ls -lh "$APK"
@@ -427,7 +422,7 @@ jobs:
           echo "Signed Play Store AAB verified."
           ls -lh "$AAB"
 
-      # 18. Upload release files
+      # 18. Upload APK and AAB
       - name: Upload Release APK and AAB
         uses: actions/upload-artifact@v4
         with:
