@@ -56,30 +56,30 @@ jobs:
             "platforms;android-36" \
             "build-tools;36.0.0"
 
-      # 6. Verify release keystore and secrets
+      # 6. Verify release keystore
       - name: Verify Release Keystore
         run: |
           set -e
 
-          if [ ! -f "src/release_key.jks" ]; then
+          test -f "src/release_key.jks" || {
             echo "ERROR: src/release_key.jks not found."
             exit 1
-          fi
+          }
 
-          if [ -z "$KEYSTORE_PASSWORD" ]; then
-            echo "ERROR: KEYSTORE_PASSWORD secret is missing."
+          test -n "$KEYSTORE_PASSWORD" || {
+            echo "ERROR: KEYSTORE_PASSWORD is missing."
             exit 1
-          fi
+          }
 
-          if [ -z "$KEY_PASSWORD" ]; then
-            echo "ERROR: KEY_PASSWORD secret is missing."
+          test -n "$KEY_PASSWORD" || {
+            echo "ERROR: KEY_PASSWORD is missing."
             exit 1
-          fi
+          }
 
-          if [ -z "$KEY_ALIAS" ]; then
-            echo "ERROR: KEY_ALIAS secret is missing."
+          test -n "$KEY_ALIAS" || {
+            echo "ERROR: KEY_ALIAS is missing."
             exit 1
-          fi
+          }
 
           keytool -list \
             -keystore src/release_key.jks \
@@ -107,7 +107,7 @@ jobs:
             exit 1
           fi
 
-          echo "SK Skyline static export verified."
+          echo "Static game export verified."
 
       # 10. Add Android platform
       - name: Add Android Platform
@@ -117,7 +117,77 @@ jobs:
       - name: Sync Capacitor
         run: npx cap sync android
 
-      # 12. Configure Android SDK versions
+      # 12. Generate Android launcher icons from JPG
+      - name: Generate Android Launcher Icons
+        run: |
+          set -e
+
+          if [ ! -f "src/ic_launcher.jpg" ]; then
+            echo "ERROR: src/ic_launcher.jpg not found."
+            echo "Upload your logo to src/ic_launcher.jpg."
+            exit 1
+          fi
+
+          python3 -m pip install --quiet Pillow
+
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image, ImageOps
+
+          source = Path("src/ic_launcher.jpg")
+
+          image = Image.open(source).convert("RGB")
+
+          # Center-crop the image to a square.
+          image = ImageOps.fit(
+              image,
+              (1024, 1024),
+              method=Image.Resampling.LANCZOS,
+              centering=(0.5, 0.5)
+          )
+
+          sizes = {
+              "mipmap-mdpi": 48,
+              "mipmap-hdpi": 72,
+              "mipmap-xhdpi": 96,
+              "mipmap-xxhdpi": 144,
+              "mipmap-xxxhdpi": 192
+          }
+
+          resource_root = Path(
+              "android/app/src/main/res"
+          )
+
+          for folder, size in sizes.items():
+              output_dir = resource_root / folder
+              output_dir.mkdir(
+                  parents=True,
+                  exist_ok=True
+              )
+
+              icon = image.resize(
+                  (size, size),
+                  Image.Resampling.LANCZOS
+              )
+
+              icon.save(
+                  output_dir / "ic_launcher.png",
+                  format="PNG",
+                  optimize=True
+              )
+
+              icon.save(
+                  output_dir / "ic_launcher_round.png",
+                  format="PNG",
+                  optimize=True
+              )
+
+              print(f"Generated {folder}: {size}x{size}")
+
+          print("All Android launcher icons generated.")
+          PY
+
+      # 13. Configure Android SDK versions
       - name: Configure Android SDK Versions
         run: |
           python3 - <<'PY'
@@ -161,8 +231,8 @@ jobs:
           print("Target SDK: 36")
           PY
 
-      # 13. Configure landscape orientation
-      - name: Set Android Landscape Orientation
+      # 14. Configure landscape and launcher icon
+      - name: Configure Android Manifest
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -212,12 +282,52 @@ jobs:
               + content[match.end():]
           )
 
+          # Set application launcher icon.
+          application_match = re.search(
+              r'<application\b[^>]*>',
+              content
+          )
+
+          if not application_match:
+              raise SystemExit(
+                  "ERROR: Application declaration not found."
+              )
+
+          application = application_match.group(0)
+
+          for attribute, value in [
+              ("android:icon", "@mipmap/ic_launcher"),
+              ("android:roundIcon", "@mipmap/ic_launcher_round")
+          ]:
+              attr_pattern = (
+                  re.escape(attribute) + r'="[^"]*"'
+              )
+
+              if re.search(attr_pattern, application):
+                  application = re.sub(
+                      attr_pattern,
+                      f'{attribute}="{value}"',
+                      application
+                  )
+              else:
+                  application = (
+                      application[:-1]
+                      + f' {attribute}="{value}">'
+                  )
+
+          content = (
+              content[:application_match.start()]
+              + application
+              + content[application_match.end():]
+          )
+
           path.write_text(content)
 
           print("Landscape orientation configured.")
+          print("Launcher icon configured.")
           PY
 
-      # 14. Configure release signing
+      # 15. Configure release signing
       - name: Configure Android Release Signing
         working-directory: android
         run: |
@@ -306,13 +416,11 @@ jobs:
                   "ERROR: Unbalanced Gradle braces."
               )
 
-          # Find Android block.
-          android_open, android_close = find_block(
+          android_open, _ = find_block(
               content,
               r"(?m)^\s*android\s*\{"
           )
 
-          # Insert release signing configuration.
           if not re.search(r"\bsigningConfigs\s*\{", content):
               signing_config = """
               signingConfigs {
@@ -333,7 +441,6 @@ jobs:
                   + content[android_open + 1:]
               )
 
-          # Find buildTypes.
           build_open, build_close = find_block(
               content,
               r"\bbuildTypes\s*\{"
@@ -341,17 +448,16 @@ jobs:
 
           build_types = content[build_open:build_close + 1]
 
-          # Find release configuration inside buildTypes.
           release_open_relative, release_close_relative = find_block(
               build_types,
               r"\brelease\s*\{"
           )
 
           release_open = build_open + release_open_relative
-          release_close = build_open + release_close_relative
 
           release_block = content[
-              release_open:release_close + 1
+              release_open:
+              build_open + release_close_relative + 1
           ]
 
           if not re.search(r"\bsigningConfig\b", release_block):
@@ -364,10 +470,9 @@ jobs:
           path.write_text(content)
 
           print("Release signing configured.")
-          print("Keystore: src/release_key.jks")
           PY
 
-      # 15. Build release APK and AAB
+      # 16. Build signed APK and AAB
       - name: Build Signed Release APK and AAB
         working-directory: android
         run: |
@@ -382,7 +487,7 @@ jobs:
             assembleRelease \
             bundleRelease
 
-      # 16. Verify signed release APK
+      # 17. Verify signed release APK
       - name: Verify Release APK
         run: |
           set -e
@@ -405,7 +510,7 @@ jobs:
           echo "Signed release APK verified."
           ls -lh "$APK"
 
-      # 17. Verify signed Play Store AAB
+      # 18. Verify signed Play Store AAB
       - name: Verify Play Store AAB
         run: |
           set -e
@@ -422,7 +527,7 @@ jobs:
           echo "Signed Play Store AAB verified."
           ls -lh "$AAB"
 
-      # 18. Upload APK and AAB
+      # 19. Upload APK and AAB
       - name: Upload Release APK and AAB
         uses: actions/upload-artifact@v4
         with:
