@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -15,11 +14,15 @@ const TILE_SIZE = 4;
 const WORLD_SIZE = GRID_SIZE * TILE_SIZE;
 const HALF_WORLD = WORLD_SIZE / 2;
 
+const STARTING_MONEY = 5000;
+const HOUR_MS = 60 * 60 * 1000;
+
 type Category = 'road' | 'building' | 'shop' | 'gov';
 
 type ModelOption = {
   name: string;
   path: string;
+  price: number;
 };
 
 type BuildingSelection = {
@@ -77,33 +80,123 @@ type MovingItem = {
 
 const CATEGORIES: Record<Category, ModelOption[]> = {
   road: [
-    { name: 'Straight Road', path: '/models/roads/road.glb' },
-    { name: 'Road Lamp', path: '/models/roads/road_lamp.glb' },
-    { name: 'Traffic Sign', path: '/models/roads/road_traffic_sign.glb' }
+    {
+      name: 'Straight Road',
+      path: '/models/roads/road.glb',
+      price: 50
+    },
+    {
+      name: 'Road Lamp',
+      path: '/models/roads/road_lamp.glb',
+      price: 50
+    },
+    {
+      name: 'Traffic Sign',
+      path: '/models/roads/road_traffic_sign.glb',
+      price: 50
+    }
   ],
 
   building: [
-    { name: 'Building Level 1', path: '/models/buildings/level1.glb' }
+    {
+      name: 'Home Level 1',
+      path: '/models/buildings/level1.glb',
+      price: 500
+    }
   ],
 
   shop: [
-    { name: 'Shop 1', path: '/models/shops/shop1.glb' }
+    {
+      name: 'Shop 1',
+      path: '/models/shops/shop1.glb',
+      price: 1000
+    }
   ],
 
   gov: [
-    { name: 'Airport Buildings', path: '/models/gov/airport_buildings.glb' },
-    { name: 'Control Tower', path: '/models/gov/airport_control_tower.glb' },
-    { name: 'Airport Transport', path: '/models/gov/airport_transport.glb' },
-    { name: 'Gas Station 1', path: '/models/gov/gas_station1.glb' },
-    { name: 'Gas Station 2', path: '/models/gov/gas_station2.glb' },
-    { name: 'Giant Office', path: '/models/gov/giant_office_building.glb' },
-    { name: 'Gov Office', path: '/models/gov/gov_office1.glb' },
-    { name: 'Mini Office', path: '/models/gov/mini_office.glb' },
-    { name: 'Old Office', path: '/models/gov/old_office_building.glb' },
-    { name: 'Police Station 1', path: '/models/gov/police_station1.glb' },
-    { name: 'Police Station 2', path: '/models/gov/police_station2.glb' }
+    {
+      name: 'Airport Buildings',
+      path: '/models/gov/airport_buildings.glb',
+      price: 10000
+    },
+    {
+      name: 'Control Tower',
+      path: '/models/gov/airport_control_tower.glb',
+      price: 25000
+    },
+    {
+      name: 'Airport Transport',
+      path: '/models/gov/airport_transport.glb',
+      price: 50000
+    },
+    {
+      name: 'Gas Station 1',
+      path: '/models/gov/gas_station1.glb',
+      price: 100000
+    },
+    {
+      name: 'Gas Station 2',
+      path: '/models/gov/gas_station2.glb',
+      price: 250000
+    },
+    {
+      name: 'Giant Office',
+      path: '/models/gov/giant_office_building.glb',
+      price: 10000000
+    },
+    {
+      name: 'Gov Office',
+      path: '/models/gov/gov_office1.glb',
+      price: 500000
+    },
+    {
+      name: 'Mini Office',
+      path: '/models/gov/mini_office.glb',
+      price: 100000
+    },
+    {
+      name: 'Old Office',
+      path: '/models/gov/old_office_building.glb',
+      price: 250000
+    },
+    {
+      name: 'Police Station 1',
+      path: '/models/gov/police_station1.glb',
+      price: 1000000
+    },
+    {
+      name: 'Police Station 2',
+      path: '/models/gov/police_station2.glb',
+      price: 2000000
+    }
   ]
 };
+
+// Price to upgrade FROM the current level to the next level.
+const BUILDING_UPGRADE_PRICES: Record<number, number> = {
+  1: 10000,
+  2: 25000,
+  3: 35000,
+  4: 50000,
+  5: 75000,
+  6: 1000000
+};
+
+// Home rent is a city expense, not collectable income.
+// Level 1 costs $500 per hour; each upgrade increases it.
+const HOME_RENT_BY_LEVEL: Record<number, number> = {
+  1: 500,
+  2: 1000,
+  3: 2000,
+  4: 3500,
+  5: 5000,
+  6: 7500,
+  7: 10000
+};
+
+// Collectable income rates, paid per hour.
+const SHOP_INCOME_PER_HOUR = 30;
+const GOV_INCOME_PER_HOUR = 50;
 
 const UPGRADE_PATHS = Array.from(
   { length: 7 },
@@ -120,16 +213,9 @@ const PERSON_PATHS = Array.from(
   (_, i) => `/models/population/population${i + 1}.glb`
 );
 
-const COSTS: Record<Category, number> = {
-  road: 10,
-  building: 500,
-  shop: 800,
-  gov: 1500
-};
-
 const CATEGORY_NAMES: Record<Category, string> = {
   road: 'Road',
-  building: 'Building',
+  building: 'Home',
   shop: 'Shop',
   gov: 'Government'
 };
@@ -143,6 +229,10 @@ const POPULATION_VALUES: Record<Category, number> = {
 
 function gridKey(x: number, z: number): string {
   return `${x}-${z}`;
+}
+
+function formatMoney(value: number): string {
+  return `$${Math.floor(value).toLocaleString()}`;
 }
 
 function worldPosition(x: number, z: number) {
@@ -162,6 +252,17 @@ function getFootprint(category: Category) {
   }
 
   return { width: 1, depth: 1 };
+}
+
+function getHourlyIncome(category: Category): number {
+  if (category === 'shop') return SHOP_INCOME_PER_HOUR;
+  if (category === 'gov') return GOV_INCOME_PER_HOUR;
+  return 0;
+}
+
+function getItemPrice(category: Category, path: string): number {
+  const option = CATEGORIES[category].find((item) => item.path === path);
+  return option?.price ?? 0;
 }
 
 // ======================================================
@@ -436,10 +537,6 @@ function prepareModel(
   return root;
 }
 
-/**
- * Vehicle models are normalized to a consistent size.
- * The longest horizontal dimension is aligned with local Z.
- */
 function prepareCarModel(template: THREE.Object3D): THREE.Group {
   const root = new THREE.Group();
   const model = template.clone(true);
@@ -482,6 +579,109 @@ function prepareCarModel(template: THREE.Object3D): THREE.Group {
 }
 
 // ======================================================
+// INCOME LABELS ABOVE BUILDINGS
+// ======================================================
+
+function createIncomeLabel(): THREE.Sprite {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 128;
+
+  const context = canvas.getContext('2d');
+
+  if (context) {
+    context.fillStyle = 'rgba(5, 20, 15, 0.88)';
+    context.beginPath();
+    context.roundRect(8, 8, 496, 112, 24);
+    context.fill();
+
+    context.fillStyle = '#86efac';
+    context.font = 'bold 42px Arial';
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText('$30 / hour', 256, 64);
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+
+  const material = new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    depthTest: false
+  });
+
+  const sprite = new THREE.Sprite(material);
+  sprite.scale.set(5.2, 1.3, 1);
+  sprite.position.set(0, 6, 0);
+  sprite.renderOrder = 10;
+
+  return sprite;
+}
+
+function updateIncomeLabel(group: THREE.Group, now: number) {
+  const category = group.userData.category as Category;
+  const hourlyIncome = Number(group.userData.hourlyIncome || 0);
+
+  if (hourlyIncome <= 0) return;
+
+  const lastCollectedAt = Number(group.userData.lastCollectedAt || now);
+  const elapsed = Math.max(0, now - lastCollectedAt);
+  const completedHours = Math.floor(elapsed / HOUR_MS);
+  const readyAmount = completedHours * hourlyIncome;
+
+  const sprite = group.userData.incomeSprite as THREE.Sprite | undefined;
+
+  if (!sprite) return;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 128;
+
+  const context = canvas.getContext('2d');
+  if (!context) return;
+
+  context.fillStyle = 'rgba(5, 20, 15, 0.9)';
+  context.beginPath();
+  context.roundRect(8, 8, 496, 112, 24);
+  context.fill();
+
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+
+  if (readyAmount > 0) {
+    context.fillStyle = '#86efac';
+    context.font = 'bold 42px Arial';
+    context.fillText(`+$${readyAmount.toLocaleString()} READY`, 256, 64);
+  } else {
+    const remaining = Math.max(0, HOUR_MS - elapsed);
+    const minutes = Math.ceil(remaining / 60000);
+
+    context.fillStyle = '#facc15';
+    context.font = 'bold 38px Arial';
+    context.fillText(
+      `${formatMoney(hourlyIncome)} / hour · ${minutes} min`,
+      256,
+      64
+    );
+  }
+
+  const oldMaterial = sprite.material as THREE.SpriteMaterial;
+  const oldTexture = oldMaterial.map;
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+
+  oldMaterial.map = texture;
+  oldMaterial.needsUpdate = true;
+
+  if (oldTexture) oldTexture.dispose();
+
+  group.userData.incomeReady = readyAmount;
+  group.userData.incomeUpdatedAt = now;
+}
+
+// ======================================================
 // MAIN COMPONENT
 // ======================================================
 
@@ -489,11 +689,12 @@ export default function GameCanvas() {
   const mountRef = useRef<HTMLDivElement>(null);
 
   const [loading, setLoading] = useState(true);
-  const [money, setMoney] = useState(100000);
+  const [money, setMoney] = useState(STARTING_MONEY);
   const [population, setPopulation] = useState(0);
 
   const [activeCategory, setActiveCategory] = useState<Category>('road');
   const [menuOpen, setMenuOpen] = useState(false);
+
   const [selectedModel, setSelectedModel] =
     useState<ModelOption | null>(null);
 
@@ -502,6 +703,8 @@ export default function GameCanvas() {
 
   const [message, setMessage] = useState('');
   const [moveMode, setMoveMode] = useState(false);
+  const [rotation, setRotation] = useState(0);
+  const [incomeRefresh, setIncomeRefresh] = useState(0);
 
   const sceneRef = useRef<THREE.Scene | null>(null);
   const modelCache = useRef<Map<string, THREE.Object3D>>(new Map());
@@ -512,11 +715,10 @@ export default function GameCanvas() {
 
   const selectedModelRef = useRef<ModelOption | null>(null);
   const activeCategoryRef = useRef<Category>('road');
-  const moneyRef = useRef(100000);
+  const moneyRef = useRef(STARTING_MONEY);
+  const rotationRef = useRef(0);
 
-  // IMPORTANT: This ref prevents Move Mode from rebuilding the scene.
   const moveModeRef = useRef(false);
-
   const movingItemRef = useRef<MovingItem | null>(null);
 
   const placeBuildingRef = useRef<(x: number, z: number) => void>(() => {});
@@ -525,7 +727,13 @@ export default function GameCanvas() {
   selectedModelRef.current = selectedModel;
   activeCategoryRef.current = activeCategory;
   moneyRef.current = money;
+  rotationRef.current = rotation;
   moveModeRef.current = moveMode;
+
+  const changeMoney = (amount: number) => {
+    moneyRef.current = amount;
+    setMoney(amount);
+  };
 
   // ====================================================
   // LOAD MODELS
@@ -738,7 +946,6 @@ export default function GameCanvas() {
     const dx = car.x - car.previousX;
     const dz = car.z - car.previousZ;
 
-    // Continue straight whenever possible.
     const straight = choices.filter(
       (next) => next.x === dx && next.z === dz
     );
@@ -772,7 +979,6 @@ export default function GameCanvas() {
     ];
 
     const template = modelCache.current.get(path);
-
     if (!template) return;
 
     const car = prepareCarModel(template);
@@ -814,7 +1020,6 @@ export default function GameCanvas() {
     ];
 
     const template = modelCache.current.get(path);
-
     if (!template) return;
 
     const person = prepareModel(template, 0.8, 0.8, 1.8);
@@ -931,10 +1136,10 @@ export default function GameCanvas() {
       return;
     }
 
-    const cost = COSTS[category];
+    const cost = model.price;
 
     if (moneyRef.current < cost) {
-      setMessage('Not enough money!');
+      setMessage(`Not enough money. You need ${formatMoney(cost)}.`);
       return;
     }
 
@@ -952,7 +1157,7 @@ export default function GameCanvas() {
       model.path === '/models/roads/road.glb';
 
     if (isMainRoad) {
-      // Always use a flat road tile instead of a cube-shaped GLB.
+      // Use a flat road tile, not a cube-shaped imported road model.
       group.add(createRoadTile());
     } else {
       const maxHeight =
@@ -976,8 +1181,25 @@ export default function GameCanvas() {
     );
 
     group.position.set(position.x, 0.02, position.z);
+    group.rotation.y = rotationRef.current;
 
     group.userData.modelPath = model.path;
+    group.userData.constructionCost = cost;
+    group.userData.rotation = rotationRef.current;
+    group.userData.lastRentPaidAt = Date.now();
+
+    const hourlyIncome = getHourlyIncome(category);
+
+    if (hourlyIncome > 0) {
+      group.userData.hourlyIncome = hourlyIncome;
+      group.userData.lastCollectedAt = Date.now();
+
+      const label = createIncomeLabel();
+      group.userData.incomeSprite = label;
+      group.add(label);
+
+      updateIncomeLabel(group, Date.now());
+    }
 
     scene.add(group);
 
@@ -992,23 +1214,22 @@ export default function GameCanvas() {
       isMainRoad
     );
 
-    moneyRef.current -= cost;
-    setMoney(moneyRef.current);
+    changeMoney(moneyRef.current - cost);
 
     if (category === 'building') {
-      setPopulation((p) => p + 15);
+      setPopulation((p) => p + POPULATION_VALUES.building);
 
       for (let i = 0; i < 4; i++) {
         spawnPerson(x, z);
       }
     } else if (category === 'shop') {
-      setPopulation((p) => p + 8);
+      setPopulation((p) => p + POPULATION_VALUES.shop);
 
       for (let i = 0; i < 3; i++) {
         spawnPerson(x, z);
       }
     } else if (category === 'gov') {
-      setPopulation((p) => p + 5);
+      setPopulation((p) => p + POPULATION_VALUES.gov);
 
       for (let i = 0; i < 3; i++) {
         spawnPerson(x, z);
@@ -1025,10 +1246,51 @@ export default function GameCanvas() {
     selectedModelRef.current = null;
     setSelectedModel(null);
 
-    setMessage(`${model.name} constructed successfully.`);
+    setMessage(
+      `${model.name} constructed for ${formatMoney(cost)}.`
+    );
   }, [spawnCar, spawnPerson]);
 
   placeBuildingRef.current = placeBuilding;
+
+  // ====================================================
+  // ROTATE SELECTED PLACED ITEM
+  // ====================================================
+
+  const rotateSelectedBuilding = () => {
+    if (!selectedBuilding) return;
+
+    const item = gridData.current[
+      gridKey(selectedBuilding.x, selectedBuilding.z)
+    ];
+
+    if (!item) return;
+
+    const nextRotation =
+      ((Number(item.mesh.userData.rotation || 0) + Math.PI / 2) %
+        (Math.PI * 2));
+
+    item.mesh.rotation.y = nextRotation;
+    item.mesh.userData.rotation = nextRotation;
+
+    setMessage('Item rotated 90 degrees.');
+  };
+
+  // ====================================================
+  // ROTATE PLACEMENT TOOL
+  // ====================================================
+
+  const rotatePlacementTool = () => {
+    if (!selectedModel) return;
+
+    const nextRotation = (rotationRef.current + Math.PI / 2) %
+      (Math.PI * 2);
+
+    rotationRef.current = nextRotation;
+    setRotation(nextRotation);
+
+    setMessage('Placement direction rotated 90 degrees.');
+  };
 
   // ====================================================
   // MOVE SELECTED ITEM
@@ -1115,7 +1377,7 @@ export default function GameCanvas() {
 
     moveModeRef.current = true;
     setMoveMode(true);
-    setMessage('Tap an empty location to move this item.');
+    setMessage('Tap empty land to move this item.');
   };
 
   const cancelMoving = () => {
@@ -1173,11 +1435,26 @@ export default function GameCanvas() {
     const group = item.mesh;
     const category = item.category;
 
-    const refund = Math.floor(COSTS[category] * 0.5);
+    const originalCost = Number(
+      group.userData.constructionCost ?? getItemPrice(
+        category,
+        String(group.userData.modelPath || '')
+      )
+    );
+
+    const refund = Math.floor(originalCost * 0.5);
     const populationLoss = POPULATION_VALUES[category];
 
     removeFromGrid(group);
     sceneRef.current?.remove(group);
+
+    const incomeSprite = group.userData.incomeSprite as THREE.Sprite | undefined;
+
+    if (incomeSprite) {
+      const material = incomeSprite.material as THREE.SpriteMaterial;
+      material.map?.dispose();
+      material.dispose();
+    }
 
     cars.current = cars.current.filter((car) => {
       if (!isRoad(car.x, car.z)) {
@@ -1188,8 +1465,7 @@ export default function GameCanvas() {
       return true;
     });
 
-    moneyRef.current += refund;
-    setMoney(moneyRef.current);
+    changeMoney(moneyRef.current + refund);
 
     if (populationLoss > 0) {
       setPopulation((p) => Math.max(0, p - populationLoss));
@@ -1198,7 +1474,7 @@ export default function GameCanvas() {
     setSelectedBuilding(null);
 
     setMessage(
-      `${CATEGORY_NAMES[category]} removed. $${refund.toLocaleString()} refunded.`
+      `${CATEGORY_NAMES[category]} removed. ${formatMoney(refund)} refunded.`
     );
   };
 
@@ -1214,14 +1490,14 @@ export default function GameCanvas() {
     const currentLevel = selectedBuilding.level;
 
     if (currentLevel >= 7) {
-      setMessage('Maximum level reached!');
+      setMessage('Maximum home level reached!');
       return;
     }
 
-    const cost = currentLevel * 1000;
+    const cost = BUILDING_UPGRADE_PRICES[currentLevel];
 
     if (moneyRef.current < cost) {
-      setMessage('Not enough money!');
+      setMessage(`Not enough money. You need ${formatMoney(cost)}.`);
       return;
     }
 
@@ -1240,6 +1516,8 @@ export default function GameCanvas() {
     }
 
     const group = item.mesh;
+
+    // Preserve the income sprite if one is ever added to a home.
     group.clear();
 
     group.add(
@@ -1253,6 +1531,8 @@ export default function GameCanvas() {
 
     group.userData.level = nextLevel;
     group.userData.modelPath = nextPath;
+    group.userData.constructionCost =
+      Number(group.userData.constructionCost || 500) + cost;
 
     Object.values(gridData.current).forEach((tile) => {
       if (tile.mesh === group) {
@@ -1260,9 +1540,7 @@ export default function GameCanvas() {
       }
     });
 
-    moneyRef.current -= cost;
-    setMoney(moneyRef.current);
-
+    changeMoney(moneyRef.current - cost);
     setPopulation((p) => p + 20);
 
     setSelectedBuilding({
@@ -1270,45 +1548,128 @@ export default function GameCanvas() {
       level: nextLevel
     });
 
-    setMessage(`Building upgraded to Level ${nextLevel}!`);
+    setMessage(
+      `Home upgraded to Level ${nextLevel} for ${formatMoney(cost)}.`
+    );
   };
 
   // ====================================================
-  // AUTOMATIC CITY INCOME
+  // COLLECT SHOP / GOVERNMENT INCOME
+  // ====================================================
+
+  const collectSelectedIncome = () => {
+    if (!selectedBuilding) return;
+
+    if (
+      selectedBuilding.category !== 'shop' &&
+      selectedBuilding.category !== 'gov'
+    ) {
+      return;
+    }
+
+    const item = gridData.current[
+      gridKey(selectedBuilding.x, selectedBuilding.z)
+    ];
+
+    if (!item) return;
+
+    const group = item.mesh;
+    const hourlyIncome = Number(group.userData.hourlyIncome || 0);
+    const lastCollectedAt = Number(
+      group.userData.lastCollectedAt || Date.now()
+    );
+
+    const now = Date.now();
+    const completedHours = Math.floor(
+      Math.max(0, now - lastCollectedAt) / HOUR_MS
+    );
+
+    if (completedHours < 1) {
+      setMessage('Income is not ready yet. Wait until one hour has passed.');
+      return;
+    }
+
+    const amount = completedHours * hourlyIncome;
+
+    group.userData.lastCollectedAt =
+      lastCollectedAt + completedHours * HOUR_MS;
+
+    updateIncomeLabel(group, now);
+
+    changeMoney(moneyRef.current + amount);
+    setIncomeRefresh((value) => value + 1);
+
+    setMessage(
+      `${formatMoney(amount)} collected from this ${CATEGORY_NAMES[selectedBuilding.category].toLowerCase()}!`
+    );
+  };
+
+  // ====================================================
+  // PAY HOME RENT
+  // ====================================================
+
+  const paySelectedHomeRent = () => {
+    if (!selectedBuilding || selectedBuilding.category !== 'building') {
+      return;
+    }
+
+    const item = gridData.current[
+      gridKey(selectedBuilding.x, selectedBuilding.z)
+    ];
+
+    if (!item) return;
+
+    const group = item.mesh;
+    const level = Number(group.userData.level || 1);
+    const rent = HOME_RENT_BY_LEVEL[level] || HOME_RENT_BY_LEVEL[7];
+
+    const lastRentPaidAt = Number(
+      group.userData.lastRentPaidAt || Date.now()
+    );
+
+    const now = Date.now();
+
+    if (now - lastRentPaidAt < HOUR_MS) {
+      setMessage('Home rent is not due yet. Rent is due every hour.');
+      return;
+    }
+
+    if (moneyRef.current < rent) {
+      setMessage(`Not enough money to pay home rent of ${formatMoney(rent)}.`);
+      return;
+    }
+
+    group.userData.lastRentPaidAt = now;
+    changeMoney(moneyRef.current - rent);
+
+    setMessage(`Home rent paid: ${formatMoney(rent)}.`);
+    setIncomeRefresh((value) => value + 1);
+  };
+
+  // ====================================================
+  // REFRESH BUILDING LABELS AND UI TIMERS
   // ====================================================
 
   useEffect(() => {
     const interval = window.setInterval(() => {
-      const groups: THREE.Group[] = [];
+      const now = Date.now();
       const seen = new Set<THREE.Group>();
 
       Object.values(gridData.current).forEach((item) => {
-        if (!seen.has(item.mesh)) {
-          seen.add(item.mesh);
-          groups.push(item.mesh);
+        if (seen.has(item.mesh)) return;
+
+        seen.add(item.mesh);
+
+        if (
+          item.category === 'shop' ||
+          item.category === 'gov'
+        ) {
+          updateIncomeLabel(item.mesh, now);
         }
       });
 
-      let income = 0;
-
-      groups.forEach((group) => {
-        const category = group.userData.category as Category;
-        const level = (group.userData.level as number) || 1;
-
-        if (category === 'building') {
-          income += 15 * level;
-        } else if (category === 'shop') {
-          income += 30;
-        } else if (category === 'gov') {
-          income += 50;
-        }
-      });
-
-      if (income > 0) {
-        moneyRef.current += income;
-        setMoney(moneyRef.current);
-      }
-    }, 10000);
+      setIncomeRefresh((value) => value + 1);
+    }, 30000);
 
     return () => window.clearInterval(interval);
   }, []);
@@ -1319,7 +1680,6 @@ export default function GameCanvas() {
 
   useEffect(() => {
     const mount = mountRef.current;
-
     if (!mount) return;
 
     const scene = new THREE.Scene();
@@ -1431,7 +1791,6 @@ export default function GameCanvas() {
       if (pointerMoved) return;
 
       const target = event.target as HTMLElement;
-
       if (target.closest('.ui-panel')) return;
 
       const rect = renderer.domElement.getBoundingClientRect();
@@ -1459,8 +1818,8 @@ export default function GameCanvas() {
               return;
             }
 
-            setSelectedModel(null);
             selectedModelRef.current = null;
+            setSelectedModel(null);
 
             setSelectedBuilding({
               x: current.userData.gx as number,
@@ -1551,10 +1910,7 @@ export default function GameCanvas() {
 
       previousTime = time;
 
-      // ----------------------------------------------
-      // VEHICLES: move only along connected road tiles
-      // ----------------------------------------------
-
+      // VEHICLES
       cars.current.forEach((car) => {
         if (!isRoad(car.x, car.z)) {
           car.mesh.visible = false;
@@ -1563,7 +1919,6 @@ export default function GameCanvas() {
 
         car.mesh.visible = true;
 
-        // A waiting car checks again when a new road is built.
         if (
           car.waiting ||
           (car.tx === car.x && car.tz === car.z)
@@ -1583,18 +1938,12 @@ export default function GameCanvas() {
           car.mesh.position.x = start.x + dx * car.progress;
           car.mesh.position.z = start.z + dz * car.progress;
 
-          // Each route segment is horizontal or vertical.
           car.targetHeading = Math.atan2(dx, dz);
 
           let difference = car.targetHeading - car.heading;
 
-          while (difference > Math.PI) {
-            difference -= Math.PI * 2;
-          }
-
-          while (difference < -Math.PI) {
-            difference += Math.PI * 2;
-          }
+          while (difference > Math.PI) difference -= Math.PI * 2;
+          while (difference < -Math.PI) difference += Math.PI * 2;
 
           car.heading += difference * Math.min(10 * deltaSeconds, 1);
           car.mesh.rotation.y = car.heading;
@@ -1609,20 +1958,17 @@ export default function GameCanvas() {
             car.z = car.tz;
 
             const position = worldPosition(car.x, car.z);
-
             car.mesh.position.set(position.x, 0.13, position.z);
 
             chooseCarNextTile(car);
           }
         } else {
           const position = worldPosition(car.x, car.z);
-
           car.mesh.position.x = position.x;
           car.mesh.position.z = position.z;
         }
       });
 
-      // Remove cars whose current road tile was deleted.
       cars.current = cars.current.filter((car) => {
         if (!isRoad(car.x, car.z)) {
           scene.remove(car.mesh);
@@ -1632,17 +1978,13 @@ export default function GameCanvas() {
         return true;
       });
 
-      // ----------------------------------------------
       // PEDESTRIANS
-      // ----------------------------------------------
-
       people.current.forEach((person) => {
         person.progress += person.speed * deltaSeconds / 4;
 
         if (person.progress >= 1) {
           person.x = person.tx;
           person.z = person.tz;
-
           choosePersonDestination(person);
         }
 
@@ -1697,9 +2039,45 @@ export default function GameCanvas() {
       movingItemRef.current = null;
       sceneRef.current = null;
     };
-    // IMPORTANT: moveMode is deliberately NOT a dependency.
-    // Changing Move Mode must never recreate the city.
   }, [isRoad, chooseCarNextTile]);
+
+  // ====================================================
+  // SELECTED BUILDING INFORMATION
+  // ====================================================
+
+  const selectedGridItem = selectedBuilding
+    ? gridData.current[
+        gridKey(selectedBuilding.x, selectedBuilding.z)
+      ]
+    : undefined;
+
+  const selectedGroup = selectedGridItem?.mesh;
+
+  const selectedHourlyIncome = selectedGroup
+    ? Number(selectedGroup.userData.hourlyIncome || 0)
+    : 0;
+
+  const selectedIncomeReady = selectedGroup && selectedHourlyIncome > 0
+    ? Math.floor(
+        Math.max(
+          0,
+          Date.now() -
+            Number(selectedGroup.userData.lastCollectedAt || Date.now())
+        ) / HOUR_MS
+      ) * selectedHourlyIncome
+    : 0;
+
+  const selectedHomeRent = selectedBuilding?.category === 'building'
+    ? HOME_RENT_BY_LEVEL[selectedBuilding.level] || HOME_RENT_BY_LEVEL[7]
+    : 0;
+
+  const rentLastPaidAt = selectedGroup
+    ? Number(selectedGroup.userData.lastRentPaidAt || Date.now())
+    : Date.now();
+
+  const rentIsDue =
+    selectedBuilding?.category === 'building' &&
+    Date.now() - rentLastPaidAt >= HOUR_MS;
 
   // ====================================================
   // USER INTERFACE
@@ -1728,7 +2106,7 @@ export default function GameCanvas() {
       <div className="ui-panel absolute left-1/2 top-2 z-20 flex max-w-[99vw] -translate-x-1/2 items-center gap-1 overflow-x-auto rounded-xl border border-white/20 bg-slate-950/95 p-1 shadow-xl backdrop-blur-xl">
 
         <span className="whitespace-nowrap px-2 text-[10px] font-bold text-green-400 sm:text-sm">
-          💰 ${money.toLocaleString()}
+          💰 {formatMoney(money)}
         </span>
 
         <span className="h-6 w-px shrink-0 bg-white/20" />
@@ -1790,20 +2168,26 @@ export default function GameCanvas() {
                   setSelectedBuilding(null);
                   setMenuOpen(false);
 
+                  rotationRef.current = 0;
+                  setRotation(0);
+
                   setMessage(
-                    `${model.name} selected. Tap empty land to build.`
+                    `${model.name} selected. Price: ${formatMoney(model.price)}. Tap empty land to build.`
                   );
                 }}
                 className="rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700"
               >
-                {model.name}
+                <span className="block">{model.name}</span>
+                <span className="mt-1 block text-[10px] font-bold text-green-400">
+                  {formatMoney(model.price)}
+                </span>
               </button>
             ))}
           </div>
         </div>
       )}
 
-      {/* COMPACT MOVE MODE BANNER */}
+      {/* MOVE MODE */}
 
       {moveMode && (
         <div className="ui-panel absolute left-1/2 top-16 z-30 flex w-max max-w-[94vw] -translate-x-1/2 items-center gap-3 rounded-xl border border-blue-400/40 bg-slate-950/95 px-3 py-2 shadow-xl backdrop-blur-xl">
@@ -1827,10 +2211,10 @@ export default function GameCanvas() {
         </div>
       )}
 
-      {/* SELECTED ITEM PANEL */}
+      {/* SELECTED BUILDING PANEL */}
 
       {selectedBuilding && !moveMode && (
-        <div className="ui-panel absolute right-3 top-16 z-30 w-60 max-w-[75vw] rounded-xl border border-white/20 bg-slate-950/95 p-3 shadow-2xl backdrop-blur-xl">
+        <div className="ui-panel absolute right-3 top-16 z-30 max-h-[75vh] w-64 max-w-[78vw] overflow-y-auto rounded-xl border border-white/20 bg-slate-950/95 p-3 shadow-2xl backdrop-blur-xl">
 
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-sm font-bold">
@@ -1845,13 +2229,12 @@ export default function GameCanvas() {
             </button>
           </div>
 
+          {/* HOME DETAILS */}
+
           {selectedBuilding.category === 'building' && (
             <>
               <div className="mb-3 flex justify-between text-xs">
-                <span className="text-slate-400">
-                  Building Level
-                </span>
-
+                <span className="text-slate-400">Home Level</span>
                 <span className="font-bold text-yellow-400">
                   {selectedBuilding.level}/7
                 </span>
@@ -1866,19 +2249,41 @@ export default function GameCanvas() {
                 />
               </div>
 
+              <div className="mb-3 rounded-lg bg-white/5 p-2">
+                <p className="text-[10px] text-slate-400">
+                  Hourly home rent
+                </p>
+                <p className="mt-1 text-lg font-bold text-amber-300">
+                  {formatMoney(selectedHomeRent)}
+                </p>
+                <p className="mt-1 text-[9px] text-slate-400">
+                  Home rent is a city expense, not collectable income.
+                </p>
+              </div>
+
+              <button
+                onClick={paySelectedHomeRent}
+                disabled={!rentIsDue || money < selectedHomeRent}
+                className="mb-3 w-full rounded-lg bg-amber-600 py-2.5 text-xs font-bold hover:bg-amber-500 disabled:opacity-40"
+              >
+                {rentIsDue
+                  ? `PAY RENT · ${formatMoney(selectedHomeRent)}`
+                  : 'RENT NOT DUE YET'}
+              </button>
+
               <button
                 onClick={handleUpgrade}
                 disabled={
                   selectedBuilding.level >= 7 ||
-                  money < selectedBuilding.level * 1000
+                  money < BUILDING_UPGRADE_PRICES[selectedBuilding.level]
                 }
                 className="w-full rounded-lg bg-blue-600 py-2.5 text-xs font-bold hover:bg-blue-500 disabled:opacity-40"
               >
                 {selectedBuilding.level >= 7
                   ? 'MAX LEVEL'
-                  : `⬆ UPGRADE - $${(
-                      selectedBuilding.level * 1000
-                    ).toLocaleString()}`}
+                  : `⬆ UPGRADE · ${formatMoney(
+                      BUILDING_UPGRADE_PRICES[selectedBuilding.level]
+                    )}`}
               </button>
 
               <p className="mt-2 text-center text-[10px] text-green-400">
@@ -1887,7 +2292,51 @@ export default function GameCanvas() {
             </>
           )}
 
-          <div className="mt-3 grid grid-cols-2 gap-2">
+          {/* SHOP AND GOVERNMENT INCOME */}
+
+          {(selectedBuilding.category === 'shop' ||
+            selectedBuilding.category === 'gov') && (
+            <div className="mb-3 rounded-lg border border-green-500/30 bg-green-950/30 p-3">
+              <p className="text-[10px] font-bold uppercase text-green-300">
+                Building income
+              </p>
+
+              <p className="mt-1 text-lg font-bold text-green-400">
+                {formatMoney(selectedHourlyIncome)} / hour
+              </p>
+
+              <p className="mt-1 text-xs text-slate-300">
+                Ready to collect: {formatMoney(selectedIncomeReady)}
+              </p>
+
+              <button
+                onClick={collectSelectedIncome}
+                disabled={selectedIncomeReady <= 0}
+                className="mt-3 w-full rounded-lg bg-green-600 py-2.5 text-xs font-bold hover:bg-green-500 disabled:opacity-40"
+              >
+                {selectedIncomeReady > 0
+                  ? `COLLECT ${formatMoney(selectedIncomeReady)}`
+                  : 'WAIT FOR ONE HOUR'}
+              </button>
+
+              <p className="mt-2 text-[9px] text-slate-400">
+                Income is not added automatically. Select this building to collect it.
+              </p>
+            </div>
+          )}
+
+          {/* ROTATION */}
+
+          <button
+            onClick={rotateSelectedBuilding}
+            className="mb-2 w-full rounded-lg bg-purple-700 py-2.5 text-xs font-bold hover:bg-purple-600"
+          >
+            ↻ ROTATE 90°
+          </button>
+
+          {/* MOVE AND REMOVE */}
+
+          <div className="grid grid-cols-2 gap-2">
             <button
               onClick={startMoving}
               className="rounded-lg bg-amber-600 py-2 text-xs font-bold hover:bg-amber-500"
@@ -1904,14 +2353,14 @@ export default function GameCanvas() {
           </div>
 
           <p className="mt-2 text-center text-[9px] text-slate-400">
-            Remove refunds 50% of the original construction cost.
+            Removing an item refunds 50% of its original construction price.
           </p>
         </div>
       )}
 
       {/* SELECTED TOOL */}
 
-      <div className="ui-panel absolute bottom-3 left-3 z-20 max-w-[65vw] rounded-xl border border-white/15 bg-slate-950/90 px-3 py-2 backdrop-blur-xl">
+      <div className="ui-panel absolute bottom-3 left-3 z-20 max-w-[70vw] rounded-xl border border-white/15 bg-slate-950/90 px-3 py-2 backdrop-blur-xl">
 
         <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">
           Selected Tool
@@ -1920,14 +2369,25 @@ export default function GameCanvas() {
         <p className="text-xs font-bold text-green-400">
           {moveMode
             ? 'Moving item'
-            : selectedModel?.name || 'Select a menu item'}
+            : selectedModel
+              ? `${selectedModel.name} · ${formatMoney(selectedModel.price)}`
+              : 'Select a menu item'}
         </p>
+
+        {selectedModel && (
+          <button
+            onClick={rotatePlacementTool}
+            className="mt-2 rounded-md bg-purple-700 px-3 py-1.5 text-[10px] font-bold hover:bg-purple-600"
+          >
+            ↻ ROTATE BEFORE BUILDING
+          </button>
+        )}
       </div>
 
       {/* NOTIFICATION */}
 
       {message && (
-        <div className="ui-panel absolute bottom-16 left-1/2 z-40 max-w-[85vw] -translate-x-1/2 rounded-xl border border-white/20 bg-slate-950/95 px-4 py-2.5 text-center text-xs font-semibold shadow-xl">
+        <div className="ui-panel absolute bottom-20 left-1/2 z-40 max-w-[88vw] -translate-x-1/2 rounded-xl border border-white/20 bg-slate-950/95 px-4 py-2.5 text-center text-xs font-semibold shadow-xl">
 
           {message}
 
@@ -1941,4 +2401,4 @@ export default function GameCanvas() {
       )}
     </main>
   );
-}
+  }
