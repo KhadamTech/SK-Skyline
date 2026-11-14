@@ -72,6 +72,10 @@ type CarAgent = {
   laneEndX: number;
   laneEndZ: number;
   reservedIntersection: string | null;
+  queuedIntersection: string | null;
+  queuedTargetX: number | null;
+  queuedTargetZ: number | null;
+  clearingIntersection: boolean;
 };
 
 type PersonAgent = {
@@ -651,7 +655,11 @@ export default function GameCanvas() {
   const gridData = useRef<Record<string, GridItem>>({});
   const cars = useRef<CarAgent[]>([]);
   const people = useRef<PersonAgent[]>([]);
-  const intersectionReservations = useRef<Map<string, CarAgent>>(new Map());
+  // A single FIFO junction controller prevents conflicting movements and
+  // circular waits. It is deliberately conservative: only one car enters
+  // an intersection at a time, and the first queued car gets the next turn.
+  const intersectionOwner = useRef<CarAgent | null>(null);
+  const intersectionQueue = useRef<CarAgent[]>([]);
 
   const selectedModelRef = useRef<ModelOption | null>(null);
   const activeCategoryRef = useRef<Category>('road');
@@ -854,24 +862,92 @@ export default function GameCanvas() {
   };
 
   // ======================================================
-  // INTERSECTION RESERVATION
+  // FIFO INTERSECTION CONTROL + SAFE ROUTING
   // ======================================================
 
+  const removeFromIntersectionQueue = (car: CarAgent) => {
+    intersectionQueue.current = intersectionQueue.current.filter(
+      (queued) => queued !== car
+    );
+    car.queuedIntersection = null;
+    car.queuedTargetX = null;
+    car.queuedTargetZ = null;
+  };
+
   const releaseIntersection = useCallback((car: CarAgent) => {
-    const key = car.reservedIntersection;
-
-    if (!key) return;
-
-    if (intersectionReservations.current.get(key) === car) {
-      intersectionReservations.current.delete(key);
+    if (intersectionOwner.current === car) {
+      intersectionOwner.current = null;
     }
 
+    removeFromIntersectionQueue(car);
     car.reservedIntersection = null;
   }, []);
 
   const chooseCarNextTile = useCallback((car: CarAgent) => {
-    const neighbors = getRoadNeighbors(car.x, car.z);
+    // A queued vehicle keeps its original route and its place in the FIFO.
+    if (car.queuedIntersection) {
+      if (intersectionOwner.current && intersectionOwner.current !== car) {
+        car.waiting = true;
+        car.currentSpeed = 0;
+        car.tx = car.x;
+        car.tz = car.z;
+        return;
+      }
 
+      if (intersectionQueue.current[0] !== car) {
+        car.waiting = true;
+        car.currentSpeed = 0;
+        car.tx = car.x;
+        car.tz = car.z;
+        return;
+      }
+
+      intersectionQueue.current.shift();
+      intersectionOwner.current = car;
+      car.reservedIntersection = car.queuedIntersection;
+      const targetX = car.queuedTargetX;
+      const targetZ = car.queuedTargetZ;
+      car.queuedIntersection = null;
+      car.queuedTargetX = null;
+      car.queuedTargetZ = null;
+
+      if (targetX === null || targetZ === null || !isRoad(targetX, targetZ)) {
+        releaseIntersection(car);
+        car.waiting = true;
+        car.tx = car.x;
+        car.tz = car.z;
+        return;
+      }
+
+      const dx = targetX - car.x;
+      const dz = targetZ - car.z;
+      const lane = getLaneOffset(dx, dz);
+
+      car.tx = targetX;
+      car.tz = targetZ;
+      car.progress = 0;
+      car.waiting = false;
+      car.laneStartX = car.laneEndX;
+      car.laneStartZ = car.laneEndZ;
+      car.laneEndX = lane.x;
+      car.laneEndZ = lane.z;
+      car.targetHeading = Math.atan2(dx, dz);
+      return;
+    }
+
+    // If the car is standing on the junction tile, keep its lock while it
+    // drives out. The animation releases it after the car has cleared the
+    // conflict area, not while it is still in the middle of the junction.
+    if (car.reservedIntersection) {
+      const currentKey = gridKey(car.x, car.z);
+      if (car.reservedIntersection === currentKey) {
+        car.clearingIntersection = true;
+      } else {
+        releaseIntersection(car);
+      }
+    }
+
+    const neighbors = getRoadNeighbors(car.x, car.z);
     if (neighbors.length === 0) {
       car.tx = car.x;
       car.tz = car.z;
@@ -879,56 +955,44 @@ export default function GameCanvas() {
       return;
     }
 
-    let choices = neighbors.filter((next) => {
-      const nx = car.x + next.x;
-      const nz = car.z + next.z;
-
-      return !(nx === car.previousX && nz === car.previousZ);
-    });
-
-    if (choices.length === 0) choices = neighbors;
-
     const directionX = car.x - car.previousX;
     const directionZ = car.z - car.previousZ;
+
+    // Never reverse directly into the road the vehicle just came from,
+    // unless it is the only connected road tile.
+    let choices = neighbors.filter((next) =>
+      !(car.x + next.x === car.previousX && car.z + next.z === car.previousZ)
+    );
+    if (choices.length === 0) choices = neighbors;
 
     const straight = choices.filter(
       (next) => next.x === directionX && next.z === directionZ
     );
+    const right = choices.filter(
+      (next) => next.x === directionZ && next.z === -directionX
+    );
+    const left = choices.filter(
+      (next) => next.x === -directionZ && next.z === directionX
+    );
 
-    if (straight.length > 0 && Math.random() < 0.82) {
-      choices = straight;
-    }
+    // Prefer continuing straight. If unavailable, prefer a right turn,
+    // then a left turn. This removes random lane-crossing U-turn decisions.
+    let preferred = straight.length ? straight : right.length ? right : left.length ? left : choices;
 
-    // Do not choose a junction owned by another vehicle.
-    choices = choices.filter((next) => {
-      const nx = car.x + next.x;
-      const nz = car.z + next.z;
-
-      if (!isIntersection(nx, nz)) return true;
-
-      const owner = intersectionReservations.current.get(gridKey(nx, nz));
-      return !owner || owner === car;
-    });
-
-    // Do not drive into a tile already occupied or targeted by another car.
-    const available = choices.filter((next) => {
+    // A target tile must not already be occupied or claimed by another car.
+    const available = preferred.filter((next) => {
       const nx = car.x + next.x;
       const nz = car.z + next.z;
       const target = worldPosition(nx, nz);
 
       return !cars.current.some((other) => {
         if (other === car) return false;
-
         const otherPosition = getCarWorldPosition(other);
-
         const distance = Math.hypot(
           otherPosition.x - target.x,
           otherPosition.z - target.z
         );
-
-        const targetingSameTile = other.tx === nx && other.tz === nz;
-
-        return targetingSameTile || distance < 2.1;
+        return (other.tx === nx && other.tz === nz && !other.waiting) || distance < 2.25;
       });
     });
 
@@ -940,21 +1004,23 @@ export default function GameCanvas() {
       return;
     }
 
-    choices = available;
-
-    const next = choices[Math.floor(Math.random() * choices.length)];
+    // Keep deterministic priority when multiple legal options exist.
+    const next = available[0];
     const targetX = car.x + next.x;
     const targetZ = car.z + next.z;
 
-    // Release the previous junction only after the car has reached
-    // the next tile and is choosing its following movement.
-    releaseIntersection(car);
-
     if (isIntersection(targetX, targetZ)) {
       const key = gridKey(targetX, targetZ);
-      const owner = intersectionReservations.current.get(key);
 
-      if (owner && owner !== car) {
+      // If another vehicle owns the intersection, join the FIFO once and
+      // wait at the stop line. Do not reserve another junction while queued.
+      if (intersectionOwner.current && intersectionOwner.current !== car) {
+        if (!intersectionQueue.current.includes(car)) {
+          car.queuedIntersection = key;
+          car.queuedTargetX = targetX;
+          car.queuedTargetZ = targetZ;
+          intersectionQueue.current.push(car);
+        }
         car.waiting = true;
         car.currentSpeed = 0;
         car.tx = car.x;
@@ -962,7 +1028,20 @@ export default function GameCanvas() {
         return;
       }
 
-      intersectionReservations.current.set(key, car);
+      // Respect vehicles already waiting: a late arrival cannot jump ahead.
+      if (intersectionQueue.current.length > 0 && intersectionQueue.current[0] !== car) {
+        car.queuedIntersection = key;
+        car.queuedTargetX = targetX;
+        car.queuedTargetZ = targetZ;
+        intersectionQueue.current.push(car);
+        car.waiting = true;
+        car.currentSpeed = 0;
+        car.tx = car.x;
+        car.tz = car.z;
+        return;
+      }
+
+      intersectionOwner.current = car;
       car.reservedIntersection = key;
     }
 
@@ -971,15 +1050,15 @@ export default function GameCanvas() {
     car.progress = 0;
     car.waiting = false;
 
+    // Both ends of a movement use the correct right-hand lane for their
+    // direction. The lane transition is confined to the junction crossing.
     car.laneStartX = car.laneEndX;
     car.laneStartZ = car.laneEndZ;
-
     const lane = getLaneOffset(next.x, next.z);
     car.laneEndX = lane.x;
     car.laneEndZ = lane.z;
-
     car.targetHeading = Math.atan2(next.x, next.z);
-  }, [getRoadNeighbors, isIntersection, releaseIntersection]);
+  }, [getRoadNeighbors, isIntersection, isRoad, releaseIntersection]);
 
   const spawnCar = useCallback((x: number, z: number) => {
     const scene = sceneRef.current;
@@ -1025,8 +1104,20 @@ export default function GameCanvas() {
       laneStartZ: 0,
       laneEndX: 0,
       laneEndZ: 0,
-      reservedIntersection: null
+      reservedIntersection: null,
+      queuedIntersection: null,
+      queuedTargetX: null,
+      queuedTargetZ: null,
+      clearingIntersection: false
     };
+
+    // Cars spawned directly on a junction must own that junction while
+    // exiting, otherwise a newly spawned car could overlap an approaching car.
+    if (isIntersection(x, z)) {
+      if (intersectionOwner.current) return;
+      agent.reservedIntersection = gridKey(x, z);
+      intersectionOwner.current = agent;
+    }
 
     cars.current.push(agent);
     chooseCarNextTile(agent);
@@ -2308,6 +2399,13 @@ export default function GameCanvas() {
         car.heading += difference * Math.min(CAR_STEERING_SPEED * deltaSeconds, 1);
         car.mesh.rotation.y = car.heading;
 
+        // Release the intersection only after the vehicle has physically
+        // cleared its center. This prevents another car entering too early.
+        if (car.clearingIntersection && car.progress >= 0.82) {
+          car.clearingIntersection = false;
+          releaseIntersection(car);
+        }
+
         if (car.progress >= 1) {
           car.previousX = car.x;
           car.previousZ = car.z;
@@ -2382,7 +2480,8 @@ export default function GameCanvas() {
       cars.current = [];
       people.current = [];
       gridData.current = {};
-      intersectionReservations.current.clear();
+      intersectionOwner.current = null;
+      intersectionQueue.current = [];
 
       movingItemRef.current = null;
       sceneRef.current = null;
