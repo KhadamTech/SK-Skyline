@@ -25,7 +25,7 @@ const CAR_MIN_SPEED = 1.1;
 const CAR_ACCELERATION = 2.8;
 const CAR_STEERING_SPEED = 5;
 
-const STARTING_MONEY = 5000;
+const STARTING_MONEY = 50000;
 const HOUR_MS = 60 * 60 * 1000;
 
 const SAVE_KEY = 'sk-skyline-city-v1';
@@ -172,7 +172,7 @@ const HOME_RENT_BY_LEVEL: Record<number, number> = {
   7: 10000
 };
 
-const SHOP_INCOME_PER_HOUR = 1000;
+const SHOP_INCOME_PER_HOUR = 2500;
 const GOV_INCOME_PER_HOUR = 2500;
 
 const UPGRADE_PATHS = Array.from(
@@ -181,7 +181,7 @@ const UPGRADE_PATHS = Array.from(
 );
 
 const CAR_PATHS = Array.from(
-  { length: 8 },
+  { length: 9 },
   (_, i) => `/models/cars/car${i + 1}.glb`
 );
 
@@ -553,7 +553,7 @@ function createIncomeLabel(): THREE.Sprite {
     context.font = 'bold 42px Arial';
     context.textAlign = 'center';
     context.textBaseline = 'middle';
-    context.fillText('$30 / hour', 256, 64);
+    context.fillText('$2500 / hour', 256, 64);
   }
 
   const texture = new THREE.CanvasTexture(canvas);
