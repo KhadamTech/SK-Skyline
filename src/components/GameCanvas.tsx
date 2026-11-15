@@ -136,13 +136,13 @@ const CATEGORIES: Record<Category, ModelOption[]> = {
     { name: 'Home Level 1', path: '/models/buildings/level1.glb', price: 500 }
   ],
   shop: [
-    { name: 'Shop', path: '/models/shops/shop1.glb', price: 1000 }
+    { name: 'Shop', path: '/models/shops/shop1.glb', price: 1000 },
     { name: 'Cafe shop', path: '/models/shops/cafe.glb', price: 2000 }, 
     { name: 'Gun Shop', path: '/models/shops/gun_shop.glb', price: 200000 }, 
     { name: 'Market', path: '/models/shops/market.glb', price: 100000 }, 
     { name: 'Restaurant', path: '/models/shops/restaurant1.glb', price: 10000 }, 
     { name: 'Shopping Center1', path: '/models/shops/shopping_center1.glb', price: 500000 }, 
-    { name: 'Shopping Center2', path: '/models/shops/shopping_center2.glb', price: 1000000 }
+    { name: 'Shopping Center2', path: '/models/shops/shopping_center2.glb', price: 1000000 },
   ],
   gov: [
     { name: 'Gas Station 1', path: '/models/gov/gas_station1.glb', price: 100000 },
@@ -155,7 +155,7 @@ const CATEGORIES: Record<Category, ModelOption[]> = {
     { name: 'Police Station 2', path: '/models/gov/police_station2.glb', price: 2000000 }, 
     { name: 'Airport Buildings', path: '/models/gov/airport_buildings.glb', price: 1000000 },
     { name: 'Control Tower', path: '/models/gov/airport_control_tower.glb', price: 25000000 },
-    { name: 'Airport Transport', path: '/models/gov/airport_transport.glb', price: 50000000 }
+    { name: 'Airport Transport', path: '/models/gov/airport_transport.glb', price: 50000000 },
   ]
 };
 
