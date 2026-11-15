@@ -16,7 +16,14 @@ const WORLD_SIZE = GRID_SIZE * TILE_SIZE;
 const HALF_WORLD = WORLD_SIZE / 2;
 
 const LANE_OFFSET = 0.72;
-const CAR_MAX_COUNT = 20;
+const CAR_MAX_COUNT = 36;
+const ROAD_TILES_PER_CAR = 10;
+const AIRPLANE_PATHS = [
+  '/models/airplane/airplane1.glb',
+  '/models/airplane/airplane2.glb',
+  '/models/airplane/airplane3.glb'
+];
+const AIRPLANE_HOLD_MS = 30000;
 const CAR_SPAWN_GAP = 8;
 const CAR_MIN_GAP = 4.2;
 const CAR_SAFE_DISTANCE = 2.5;
@@ -31,7 +38,7 @@ const HOUR_MS = 60 * 60 * 1000;
 const SAVE_KEY = 'sk-skyline-city-v1';
 const SAVE_INTERVAL = 3000;
 
-type Category = 'road' | 'building' | 'shop' | 'gov';
+type Category = 'road' | 'building' | 'shop' | 'gov' | 'market';
 
 type ModelOption = {
   name: string;
@@ -76,6 +83,17 @@ type CarAgent = {
   queuedTargetX: number | null;
   queuedTargetZ: number | null;
   clearingIntersection: boolean;
+};
+
+type AirplaneAgent = {
+  mesh: THREE.Group;
+  modelIndex: number;
+  phase: 'parked' | 'taxi' | 'takeoff' | 'outbound' | 'holding' | 'returning' | 'landing';
+  phaseStartedAt: number;
+  runwayStart: THREE.Vector3;
+  runwayEnd: THREE.Vector3;
+  laneOffset: number;
+  heading: number;
 };
 
 type PersonAgent = {
@@ -144,6 +162,13 @@ const CATEGORIES: Record<Category, ModelOption[]> = {
     { name: 'Shopping Center1', path: '/models/shops/shopping_center1.glb', price: 500000 }, 
     { name: 'Shopping Center2', path: '/models/shops/shopping_center2.glb', price: 1000000 },
   ],
+  market: [
+    { name: 'Crypto Office', path: '/models/market/crypto_office.glb', price: 250000 },
+    { name: 'Factory', path: '/models/market/factory.glb', price: 500000 },
+    { name: 'Factory 1', path: '/models/market/factory1.glb', price: 750000 },
+    { name: 'Power Plant', path: '/models/market/power_plant.glb', price: 1500000 },
+    { name: 'Runway', path: '/models/market/runway.glb', price: 1000000 }
+  ],
   gov: [
     { name: 'Gas Station 1', path: '/models/gov/gas_station1.glb', price: 100000 },
     { name: 'Gas Station 2', path: '/models/gov/gas_station2.glb', price: 250000 },
@@ -180,6 +205,7 @@ const HOME_RENT_BY_LEVEL: Record<number, number> = {
 
 const SHOP_INCOME_PER_HOUR = 2500;
 const GOV_INCOME_PER_HOUR = 2500;
+const MARKET_INCOME_PER_HOUR = 5000;
 
 const UPGRADE_PATHS = Array.from(
   { length: 7 },
@@ -200,14 +226,16 @@ const CATEGORY_NAMES: Record<Category, string> = {
   road: 'Road',
   building: 'Home',
   shop: 'Shop',
-  gov: 'Government'
+  gov: 'Government',
+  market: 'Market'
 };
 
 const POPULATION_VALUES: Record<Category, number> = {
   road: 0,
   building: 15,
   shop: 8,
-  gov: 5
+  gov: 5,
+  market: 12
 };
 
 function gridKey(x: number, z: number): string {
@@ -225,8 +253,12 @@ function worldPosition(x: number, z: number) {
   };
 }
 
-function getFootprint(category: Category) {
-  if (category === 'building' || category === 'shop') {
+function getFootprint(category: Category, modelPath = '') {
+  if (modelPath === '/models/market/runway.glb') {
+    return { width: 3, depth: 1 };
+  }
+
+  if (category === 'building' || category === 'shop' || category === 'market') {
     return { width: 2, depth: 2 };
   }
 
@@ -240,6 +272,7 @@ function getFootprint(category: Category) {
 function getHourlyIncome(category: Category): number {
   if (category === 'shop') return SHOP_INCOME_PER_HOUR;
   if (category === 'gov') return GOV_INCOME_PER_HOUR;
+  if (category === 'market') return MARKET_INCOME_PER_HOUR;
   return 0;
 }
 
@@ -323,6 +356,29 @@ function createFallbackModel(path: string): THREE.Group {
     return group;
   }
 
+  if (path.includes('/airplane/')) {
+    const body = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.32, 0.42, 5.2, 12),
+      new THREE.MeshStandardMaterial({ color: 0xe8edf4, metalness: 0.25, roughness: 0.45 })
+    );
+    body.rotation.x = Math.PI / 2;
+    body.position.y = 0.65;
+    group.add(body);
+    const wing = new THREE.Mesh(
+      new THREE.BoxGeometry(5.2, 0.12, 1.05),
+      new THREE.MeshStandardMaterial({ color: 0x2563eb, metalness: 0.2 })
+    );
+    wing.position.y = 0.65;
+    group.add(wing);
+    const tail = new THREE.Mesh(
+      new THREE.BoxGeometry(1.8, 0.1, 0.65),
+      new THREE.MeshStandardMaterial({ color: 0x2563eb })
+    );
+    tail.position.set(0, 1.15, -2.1);
+    group.add(tail);
+    return group;
+  }
+
   if (path.includes('/population/')) {
     const id = Number(path.match(/population(\d+)/)?.[1] || 1);
     const colors = [0x2563eb, 0xdc6040, 0x16a36a, 0xb16ad8];
@@ -387,6 +443,23 @@ function createFallbackModel(path: string): THREE.Group {
       group.add(sign);
     }
 
+    return group;
+  }
+
+  if (path === '/models/market/runway.glb') {
+    const runway = new THREE.Mesh(
+      new THREE.BoxGeometry(12, 0.12, 3.8),
+      new THREE.MeshStandardMaterial({ color: 0x343a40, roughness: 0.95 })
+    );
+    runway.position.y = 0.06;
+    runway.receiveShadow = true;
+    group.add(runway);
+    const centerLine = new THREE.Mesh(
+      new THREE.BoxGeometry(0.12, 0.02, 10.5),
+      new THREE.MeshBasicMaterial({ color: 0xf8fafc })
+    );
+    centerLine.position.y = 0.13;
+    group.add(centerLine);
     return group;
   }
 
@@ -638,6 +711,22 @@ function updateIncomeLabel(group: THREE.Group, now: number) {
 }
 
 // ======================================================
+// AIRPORT / AIRCRAFT HELPERS
+// ======================================================
+
+function getRunwayGroups(grid: Record<string, GridItem>): THREE.Group[] {
+  const seen = new Set<THREE.Group>();
+  const result: THREE.Group[] = [];
+  Object.values(grid).forEach((item) => {
+    if (item.mesh.userData.modelPath === '/models/market/runway.glb' && !seen.has(item.mesh)) {
+      seen.add(item.mesh);
+      result.push(item.mesh);
+    }
+  });
+  return result;
+}
+
+// ======================================================
 // MAIN COMPONENT
 // ======================================================
 
@@ -661,6 +750,8 @@ export default function GameCanvas() {
   const gridData = useRef<Record<string, GridItem>>({});
   const cars = useRef<CarAgent[]>([]);
   const people = useRef<PersonAgent[]>([]);
+  const airplanes = useRef<AirplaneAgent[]>([]);
+  const airplaneEpoch = useRef<number | null>(null);
   // A single FIFO junction controller prevents conflicting movements and
   // circular waits. It is deliberately conservative: only one car enters
   // an intersection at a time, and the first queued car gets the next turn.
@@ -709,7 +800,8 @@ export default function GameCanvas() {
       ...Object.values(CATEGORIES).flat().map((model) => model.path),
       ...UPGRADE_PATHS,
       ...CAR_PATHS,
-      ...PERSON_PATHS
+      ...PERSON_PATHS,
+      ...AIRPLANE_PATHS
     ];
 
     const paths = Array.from(new Set(allPaths));
@@ -1036,10 +1128,15 @@ export default function GameCanvas() {
 
       // Respect vehicles already waiting: a late arrival cannot jump ahead.
       if (intersectionQueue.current.length > 0 && intersectionQueue.current[0] !== car) {
-        car.queuedIntersection = key;
-        car.queuedTargetX = targetX;
-        car.queuedTargetZ = targetZ;
-        intersectionQueue.current.push(car);
+        // A waiting car must appear in the FIFO only once. Re-enqueuing it
+        // every animation frame creates duplicate queue entries and can
+        // permanently starve the vehicles behind it.
+        if (!intersectionQueue.current.includes(car)) {
+          car.queuedIntersection = key;
+          car.queuedTargetX = targetX;
+          car.queuedTargetZ = targetZ;
+          intersectionQueue.current.push(car);
+        }
         car.waiting = true;
         car.currentSpeed = 0;
         car.tx = car.x;
@@ -1066,7 +1163,7 @@ export default function GameCanvas() {
     car.targetHeading = Math.atan2(next.x, next.z);
   }, [getRoadNeighbors, isIntersection, isRoad, releaseIntersection]);
 
-  const spawnCar = useCallback((x: number, z: number) => {
+  const spawnCar = useCallback((x: number, z: number, modelIndex?: number) => {
     const scene = sceneRef.current;
 
     if (!scene || cars.current.length >= CAR_MAX_COUNT || !isRoad(x, z)) {
@@ -1086,7 +1183,9 @@ export default function GameCanvas() {
 
     if (tooClose) return;
 
-    const path = CAR_PATHS[Math.floor(Math.random() * CAR_PATHS.length)];
+    const roadCount = Object.values(gridData.current).filter((item) => item.driveable).length;
+    const selectedIndex = modelIndex ?? Math.max(0, Math.floor(roadCount / ROAD_TILES_PER_CAR) - 1) % CAR_PATHS.length;
+    const path = CAR_PATHS[selectedIndex % CAR_PATHS.length];
     const template = modelCache.current.get(path);
     if (!template) return;
 
@@ -1370,8 +1469,10 @@ export default function GameCanvas() {
 
     if (!model || !scene) return;
 
-    const footprint = getFootprint(category);
-    const { width, depth } = footprint;
+    const footprint = getFootprint(category, model.path);
+    const rotatedRunway = model.path === '/models/market/runway.glb' && Math.abs(Math.sin(rotationRef.current)) > 0.5;
+    const width = rotatedRunway ? footprint.depth : footprint.width;
+    const depth = rotatedRunway ? footprint.width : footprint.depth;
 
     if (!hasSpace(x, z, width, depth)) {
       setMessage('This location is occupied or outside city limits.');
@@ -1402,6 +1503,7 @@ export default function GameCanvas() {
       const maxHeight =
         category === 'gov' ? 18 :
         category === 'shop' ? 7 :
+        category === 'market' ? 18 :
         category === 'road' ? 5 : 30;
 
       group.add(
@@ -1423,6 +1525,7 @@ export default function GameCanvas() {
     group.rotation.y = rotationRef.current;
 
     group.userData.modelPath = model.path;
+    group.userData.isRunway = model.path === '/models/market/runway.glb';
     group.userData.constructionCost = model.price;
     group.userData.rotation = rotationRef.current;
     group.userData.lastRentPaidAt = Date.now();
@@ -1468,7 +1571,18 @@ export default function GameCanvas() {
 
     setSelectedBuilding({ x, z, level: 1, category });
 
-    if (isMainRoad) spawnCar(x, z);
+    if (model.path === '/models/market/runway.glb') {
+      const runwayCount = getRunwayGroups(gridData.current).length;
+      setMessage(runwayCount >= 2 ? 'Second runway completed. Three aircraft will begin scheduled flights.' : 'Runway built. Build a second 3-block runway to unlock aircraft.');
+    }
+
+    if (isMainRoad) {
+      const roadCount = Object.values(gridData.current).filter((item) => item.driveable).length;
+      if (roadCount >= ROAD_TILES_PER_CAR && roadCount % ROAD_TILES_PER_CAR === 0) {
+        const modelIndex = (Math.floor(roadCount / ROAD_TILES_PER_CAR) - 1) % CAR_PATHS.length;
+        spawnCar(x, z, modelIndex);
+      }
+    }
 
     selectedModelRef.current = null;
     setSelectedModel(null);
@@ -1929,6 +2043,7 @@ export default function GameCanvas() {
               const maxHeight =
                 saved.category === 'gov' ? 18 :
                 saved.category === 'shop' ? 7 :
+                saved.category === 'market' ? 18 :
                 saved.category === 'road' ? 5 : 30;
 
               group.add(
@@ -1950,6 +2065,7 @@ export default function GameCanvas() {
             group.rotation.y = Number(saved.rotation || 0);
 
             group.userData.modelPath = saved.modelPath;
+            group.userData.isRunway = saved.modelPath === '/models/market/runway.glb';
             group.userData.constructionCost = Number(saved.constructionCost || 0);
             group.userData.rotation = Number(saved.rotation || 0);
             group.userData.level = Number(saved.level || 1);
@@ -2024,10 +2140,11 @@ export default function GameCanvas() {
       }
     });
 
-    // Avoid filling every road tile with a car.
-    roadTiles.forEach((tile, index) => {
-      if (index % 3 === 0) spawnCar(tile.x, tile.z);
-    });
+    // Restore one vehicle for every completed 10-road milestone.
+    for (let milestone = ROAD_TILES_PER_CAR; milestone <= roadTiles.length; milestone += ROAD_TILES_PER_CAR) {
+      const tile = roadTiles[milestone - 1];
+      if (tile) spawnCar(tile.x, tile.z, (Math.floor(milestone / ROAD_TILES_PER_CAR) - 1) % CAR_PATHS.length);
+    }
 
     saveCity();
   }, [loading, spawnCar, spawnPerson, saveCity]);
@@ -2075,7 +2192,7 @@ export default function GameCanvas() {
         if (seen.has(item.mesh)) return;
         seen.add(item.mesh);
 
-        if (item.category === 'shop' || item.category === 'gov') {
+        if (item.category === 'shop' || item.category === 'gov' || item.category === 'market') {
           updateIncomeLabel(item.mesh, now);
         }
       });
@@ -2453,6 +2570,92 @@ export default function GameCanvas() {
         person.mesh.rotation.y = person.direction;
       });
 
+      // --------------------------------------------------
+      // AIRCRAFT: unlock after two 3-tile runway models
+      // (six runway blocks total). Aircraft launch one by one.
+      // --------------------------------------------------
+      const runwayGroups = getRunwayGroups(gridData.current);
+      if (runwayGroups.length < 2 && airplanes.current.length > 0) {
+        airplanes.current.forEach((plane) => scene.remove(plane.mesh));
+        airplanes.current = [];
+        airplaneEpoch.current = null;
+      }
+      if (runwayGroups.length >= 2 && airplanes.current.length === 0) {
+        const runway = runwayGroups[0];
+        const runwayWidth = Number(runway.userData.width || 3);
+        const runwayDepth = Number(runway.userData.depth || 1);
+        const runwayRotation = Number(runway.userData.rotation || 0);
+        const center = runway.position.clone();
+        const forward = new THREE.Vector3(Math.cos(runwayRotation), 0, -Math.sin(runwayRotation)).normalize();
+        const side = new THREE.Vector3(forward.z, 0, -forward.x).normalize();
+        const runwayLength = Math.max(runwayWidth, runwayDepth) * TILE_SIZE;
+        const runwayStart = center.clone().addScaledVector(forward, -runwayLength * 0.42);
+        const runwayEnd = center.clone().addScaledVector(forward, runwayLength * 0.42);
+        runwayStart.y = 0.35;
+        runwayEnd.y = 0.35;
+        const epoch = performance.now();
+        airplaneEpoch.current = epoch;
+        AIRPLANE_PATHS.forEach((path, modelIndex) => {
+          const template = modelCache.current.get(path);
+          if (!template) return;
+          const plane = prepareModel(template, 2.2, 4.6, 2.8);
+          const laneOffset = (modelIndex - 1) * 2.05;
+          const start = runwayStart.clone().addScaledVector(side, laneOffset);
+          plane.position.copy(start);
+          plane.rotation.y = runwayRotation + Math.PI / 2;
+          scene.add(plane);
+          airplanes.current.push({
+            mesh: plane, modelIndex, phase: 'parked', phaseStartedAt: epoch + modelIndex * 9000,
+            runwayStart: start, runwayEnd: runwayEnd.clone().addScaledVector(side, laneOffset),
+            laneOffset, heading: runwayRotation + Math.PI / 2
+          });
+        });
+      }
+
+      if (airplanes.current.length > 0) {
+        const now = performance.now();
+        airplanes.current.forEach((plane) => {
+          const elapsed = Math.max(0, now - plane.phaseStartedAt);
+          const center = new THREE.Vector3(0, 0, 0);
+          const cityOrbit = center.clone().add(new THREE.Vector3(plane.modelIndex * 3 - 3, 0, 0));
+          if (plane.phase === 'parked' && elapsed >= 0) {
+            plane.phase = 'taxi'; plane.phaseStartedAt = now;
+          } else if (plane.phase === 'taxi') {
+            const t = THREE.MathUtils.clamp(elapsed / 5000, 0, 1);
+            plane.mesh.position.lerpVectors(plane.runwayStart, plane.runwayEnd, t);
+            if (t >= 1) { plane.phase = 'takeoff'; plane.phaseStartedAt = now; }
+          } else if (plane.phase === 'takeoff') {
+            const t = THREE.MathUtils.clamp(elapsed / 6000, 0, 1);
+            const target = plane.runwayEnd.clone().lerp(cityOrbit, t);
+            target.y = 0.35 + t * 20;
+            plane.mesh.position.copy(target);
+            if (t >= 1) { plane.phase = 'outbound'; plane.phaseStartedAt = now; }
+          } else if (plane.phase === 'outbound') {
+            const t = THREE.MathUtils.clamp(elapsed / 5000, 0, 1);
+            const target = cityOrbit.clone().lerp(new THREE.Vector3(0, 24, 0), t);
+            target.y = 20 + Math.sin(t * Math.PI) * 5;
+            plane.mesh.position.copy(target);
+            if (t >= 1) { plane.phase = 'holding'; plane.phaseStartedAt = now; }
+          } else if (plane.phase === 'holding') {
+            const angle = elapsed / 4500 + plane.modelIndex * 2.1;
+            plane.mesh.position.set(Math.cos(angle) * 7, 24 + Math.sin(angle * 2) * 1.2, Math.sin(angle) * 7);
+            plane.mesh.rotation.y = angle + Math.PI / 2;
+            if (elapsed >= AIRPLANE_HOLD_MS) { plane.phase = 'returning'; plane.phaseStartedAt = now; }
+          } else if (plane.phase === 'returning') {
+            const t = THREE.MathUtils.clamp(elapsed / 9000, 0, 1);
+            const target = new THREE.Vector3(0, 24, 0).lerp(plane.runwayEnd, t);
+            target.y = 24 - t * 21;
+            plane.mesh.position.copy(target);
+            if (t >= 1) { plane.phase = 'landing'; plane.phaseStartedAt = now; }
+          } else if (plane.phase === 'landing') {
+            const t = THREE.MathUtils.clamp(elapsed / 4500, 0, 1);
+            plane.mesh.position.lerpVectors(plane.runwayEnd, plane.runwayStart, t);
+            plane.mesh.position.y = 0.35;
+            if (t >= 1) { plane.phase = 'parked'; plane.phaseStartedAt = now + 12000; plane.mesh.rotation.y = plane.heading; }
+          }
+        });
+      }
+
       controls.update();
       renderer.render(scene, camera);
     };
@@ -2485,6 +2688,9 @@ export default function GameCanvas() {
       cars.current.forEach((car) => releaseIntersection(car));
       cars.current = [];
       people.current = [];
+      airplanes.current.forEach((plane) => scene.remove(plane.mesh));
+      airplanes.current = [];
+      airplaneEpoch.current = null;
       gridData.current = {};
       intersectionOwner.current = null;
       intersectionQueue.current = [];
@@ -2550,7 +2756,7 @@ export default function GameCanvas() {
       )}
 
       {/* TOP BAR */}
-      <div className="ui-panel absolute left-1/2 top-2 z-20 flex max-w-[99vw] -translate-x-1/2 items-center gap-1 overflow-x-auto rounded-xl border border-white/20 bg-slate-950/95 p-1 shadow-xl backdrop-blur-xl">
+      <div className="ui-panel absolute left-1/2 top-1 z-20 flex max-w-[98vw] -translate-x-1/2 items-center gap-0.5 overflow-x-auto rounded-lg border border-white/15 bg-slate-950/95 px-1 py-0.5 shadow-lg backdrop-blur-xl">
         <span className="whitespace-nowrap px-2 text-[10px] font-bold text-green-400 sm:text-sm">
           💰 {formatMoney(money)}
         </span>
@@ -2563,7 +2769,7 @@ export default function GameCanvas() {
 
         <span className="h-6 w-px shrink-0 bg-white/20" />
 
-        {(Object.keys(CATEGORIES) as Category[]).map((category) => (
+        {(Object.keys(CATEGORIES) as Category[]).filter((category) => category !== 'market').map((category) => (
           <button
             key={category}
             onClick={() => {
@@ -2581,7 +2787,7 @@ export default function GameCanvas() {
               setSelectedBuilding(null);
               setMenuOpen(true);
             }}
-            className={`whitespace-nowrap rounded-lg px-2 py-2 text-[9px] font-bold uppercase sm:px-3 sm:text-xs ${
+            className={`whitespace-nowrap rounded-md px-1.5 py-1 text-[8px] font-bold uppercase sm:px-2 sm:text-[10px] ${
               activeCategory === category && menuOpen
                 ? 'bg-blue-600 text-white'
                 : 'text-slate-300 hover:bg-white/10'
@@ -2590,11 +2796,33 @@ export default function GameCanvas() {
             {CATEGORY_NAMES[category]}
           </button>
         ))}
+        <button
+          type="button"
+          aria-label="Market"
+          title="Market"
+          onClick={() => {
+            if (activeCategory === 'market' && menuOpen) {
+              setMenuOpen(false);
+              setSelectedModel(null);
+              selectedModelRef.current = null;
+              return;
+            }
+            setActiveCategory('market');
+            activeCategoryRef.current = 'market';
+            setSelectedModel(null);
+            selectedModelRef.current = null;
+            setSelectedBuilding(null);
+            setMenuOpen(true);
+          }}
+          className={`ml-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-emerald-300/60 text-[10px] font-black shadow-md ${activeCategory === 'market' && menuOpen ? 'bg-emerald-500 text-slate-950' : 'bg-emerald-900 text-emerald-100'}`}
+        >
+          M
+        </button>
       </div>
 
       {/* CATEGORY MENU */}
       {menuOpen && !moveMode && (
-        <div className="ui-panel absolute left-1/2 top-14 z-20 w-[96vw] max-w-3xl -translate-x-1/2 rounded-xl border border-white/20 bg-slate-950/95 p-2 shadow-2xl backdrop-blur-xl">
+        <div className="ui-panel absolute left-1/2 top-11 z-20 w-[94vw] max-w-3xl -translate-x-1/2 rounded-xl border border-white/20 bg-slate-950/95 p-2 shadow-2xl backdrop-blur-xl">
           <div className="mb-2 text-center text-[10px] font-bold uppercase tracking-widest text-slate-400">
             {CATEGORY_NAMES[activeCategory]} Items
           </div>
@@ -2718,7 +2946,8 @@ export default function GameCanvas() {
 
           {/* SHOP AND GOVERNMENT INCOME */}
           {(selectedBuilding.category === 'shop' ||
-            selectedBuilding.category === 'gov') && (
+            selectedBuilding.category === 'gov' ||
+            selectedBuilding.category === 'market') && (
             <div className="mb-3 rounded-lg border border-green-500/30 bg-green-950/30 p-3">
               <p className="text-[10px] font-bold uppercase text-green-300">
                 Building income
