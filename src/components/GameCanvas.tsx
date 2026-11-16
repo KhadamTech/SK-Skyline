@@ -32,7 +32,7 @@ const CAR_MIN_SPEED = 1.1;
 const CAR_ACCELERATION = 2.8;
 const CAR_STEERING_SPEED = 5;
 
-const STARTING_MONEY = 50000;
+const STARTING_MONEY = 5000000;
 const HOUR_MS = 60 * 60 * 1000;
 
 const SAVE_KEY = 'sk-skyline-city-v1';
