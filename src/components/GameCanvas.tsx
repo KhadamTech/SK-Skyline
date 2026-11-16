@@ -32,7 +32,7 @@ const CAR_MIN_SPEED = 1.1;
 const CAR_ACCELERATION = 2.8;
 const CAR_STEERING_SPEED = 5;
 
-const STARTING_MONEY = 500000000;
+const STARTING_MONEY = 50000;
 const HOUR_MS = 60 * 60 * 1000;
 
 const SAVE_KEY = 'sk-skyline-city-v1';
@@ -83,6 +83,7 @@ type CarAgent = {
   queuedTargetX: number | null;
   queuedTargetZ: number | null;
   clearingIntersection: boolean;
+  stuckSeconds: number;
 };
 
 type AirplaneAgent = {
@@ -94,6 +95,7 @@ type AirplaneAgent = {
   runwayEnd: THREE.Vector3;
   laneOffset: number;
   heading: number;
+  orientationOffset: number;
 };
 
 type PersonAgent = {
@@ -255,7 +257,7 @@ function worldPosition(x: number, z: number) {
 
 function getFootprint(category: Category, modelPath = '') {
   if (modelPath === '/models/market/runway.glb') {
-    return { width: 3, depth: 1 };
+    return { width: 1, depth: 1 };
   }
 
   if (category === 'building' || category === 'shop' || category === 'market') {
@@ -274,6 +276,23 @@ function getHourlyIncome(category: Category): number {
   if (category === 'gov') return GOV_INCOME_PER_HOUR;
   if (category === 'market') return MARKET_INCOME_PER_HOUR;
   return 0;
+}
+
+type BuildingBills = { rent: number; gas: number; electricity: number; water: number; maintenance: number; total: number };
+
+function getBuildingBills(category: Category, level: number): BuildingBills {
+  const safeLevel = Math.max(1, Math.min(7, level));
+  const rent = category === 'building'
+    ? (HOME_RENT_BY_LEVEL[safeLevel] || HOME_RENT_BY_LEVEL[7])
+    : category === 'shop' ? 5000
+    : category === 'gov' ? 10000
+    : category === 'market' ? 15000 : 0;
+  const multiplier = 1 + (safeLevel - 1) * 0.12;
+  const gas = Math.round((category === 'market' ? 1400 : category === 'gov' ? 900 : 700) * multiplier);
+  const electricity = Math.round((category === 'market' ? 2200 : category === 'gov' ? 1500 : 1000) * multiplier);
+  const water = Math.round((category === 'building' ? 300 : category === 'shop' ? 600 : 800) * multiplier);
+  const maintenance = Math.round((category === 'market' ? 1800 : category === 'gov' ? 1200 : 500) * multiplier);
+  return { rent, gas, electricity, water, maintenance, total: rent + gas + electricity + water + maintenance };
 }
 
 function getItemPrice(category: Category, path: string): number {
@@ -617,22 +636,22 @@ function prepareCarModel(template: THREE.Object3D): THREE.Group {
 
 function createIncomeLabel(): THREE.Sprite {
   const canvas = document.createElement('canvas');
-  canvas.width = 512;
-  canvas.height = 128;
+  canvas.width = 256;
+  canvas.height = 64;
 
   const context = canvas.getContext('2d');
 
   if (context) {
     context.fillStyle = 'rgba(5, 20, 15, 0.88)';
     context.beginPath();
-    context.roundRect(8, 8, 496, 112, 24);
+    context.roundRect(4, 4, 248, 56, 12);
     context.fill();
 
     context.fillStyle = '#86efac';
-    context.font = 'bold 42px Arial';
+    context.font = 'bold 21px Arial';
     context.textAlign = 'center';
     context.textBaseline = 'middle';
-    context.fillText('$2500 / hour', 256, 64);
+    context.fillText('$2500 / hour', 128, 32);
   }
 
   const texture = new THREE.CanvasTexture(canvas);
@@ -646,8 +665,8 @@ function createIncomeLabel(): THREE.Sprite {
     })
   );
 
-  sprite.scale.set(5.2, 1.3, 1);
-  sprite.position.set(0, 6, 0);
+  sprite.scale.set(2.45, 0.62, 1);
+  sprite.position.set(0, 4.2, 0);
   sprite.renderOrder = 10;
 
   return sprite;
@@ -666,15 +685,15 @@ function updateIncomeLabel(group: THREE.Group, now: number) {
   if (!sprite) return;
 
   const canvas = document.createElement('canvas');
-  canvas.width = 512;
-  canvas.height = 128;
+  canvas.width = 256;
+  canvas.height = 64;
 
   const context = canvas.getContext('2d');
   if (!context) return;
 
   context.fillStyle = 'rgba(5, 20, 15, 0.9)';
   context.beginPath();
-  context.roundRect(8, 8, 496, 112, 24);
+  context.roundRect(4, 4, 248, 56, 12);
   context.fill();
 
   context.textAlign = 'center';
@@ -682,18 +701,18 @@ function updateIncomeLabel(group: THREE.Group, now: number) {
 
   if (readyAmount > 0) {
     context.fillStyle = '#86efac';
-    context.font = 'bold 42px Arial';
-    context.fillText(`+$${readyAmount.toLocaleString()} READY`, 256, 64);
+    context.font = 'bold 21px Arial';
+    context.fillText(`+$${readyAmount.toLocaleString()} READY`, 128, 32);
   } else {
     const remaining = Math.max(0, HOUR_MS - elapsed);
     const minutes = Math.ceil(remaining / 60000);
 
     context.fillStyle = '#facc15';
-    context.font = 'bold 38px Arial';
+    context.font = 'bold 18px Arial';
     context.fillText(
       `${formatMoney(hourlyIncome)} / hour · ${minutes} min`,
-      256,
-      64
+      128,
+      32
     );
   }
 
@@ -1213,7 +1232,8 @@ export default function GameCanvas() {
       queuedIntersection: null,
       queuedTargetX: null,
       queuedTargetZ: null,
-      clearingIntersection: false
+      clearingIntersection: false,
+      stuckSeconds: 0
     };
 
     // Cars spawned directly on a junction must own that junction while
@@ -1573,7 +1593,7 @@ export default function GameCanvas() {
 
     if (model.path === '/models/market/runway.glb') {
       const runwayCount = getRunwayGroups(gridData.current).length;
-      setMessage(runwayCount >= 2 ? 'Second runway completed. Three aircraft will begin scheduled flights.' : 'Runway built. Build a second 3-block runway to unlock aircraft.');
+      setMessage(runwayCount >= 2 ? 'Second runway completed. Three aircraft will begin scheduled flights.' : 'Runway built. Build one more runway block to unlock aircraft.');
     }
 
     if (isMainRoad) {
@@ -1902,7 +1922,8 @@ export default function GameCanvas() {
     if (
       !selectedBuilding ||
       (selectedBuilding.category !== 'shop' &&
-        selectedBuilding.category !== 'gov')
+        selectedBuilding.category !== 'gov' &&
+        selectedBuilding.category !== 'market')
     ) {
       return;
     }
@@ -1950,44 +1971,31 @@ export default function GameCanvas() {
   // ======================================================
 
   const paySelectedHomeRent = () => {
-    if (
-      !selectedBuilding ||
-      selectedBuilding.category !== 'building'
-    ) {
-      return;
-    }
+    if (!selectedBuilding || selectedBuilding.category === 'road') return;
 
-    const item = gridData.current[
-      gridKey(selectedBuilding.x, selectedBuilding.z)
-    ];
-
+    const item = gridData.current[gridKey(selectedBuilding.x, selectedBuilding.z)];
     if (!item) return;
 
     const group = item.mesh;
     const level = Number(group.userData.level || 1);
-    const rent = HOME_RENT_BY_LEVEL[level] || HOME_RENT_BY_LEVEL[7];
-
-    const lastRentPaidAt = Number(
-      group.userData.lastRentPaidAt || Date.now()
-    );
-
+    const bills = getBuildingBills(selectedBuilding.category, level);
+    const lastPaidAt = Number(group.userData.lastRentPaidAt || Date.now());
     const now = Date.now();
 
-    if (now - lastRentPaidAt < HOUR_MS) {
-      setMessage('Home rent is not due yet. Rent is due every hour.');
+    if (now - lastPaidAt < HOUR_MS) {
+      setMessage('Building bills are not due yet. Bills are charged once every hour.');
       return;
     }
 
-    if (moneyRef.current < rent) {
-      setMessage(`Not enough money to pay home rent of ${formatMoney(rent)}.`);
+    if (moneyRef.current < bills.total) {
+      setMessage(`Not enough money. Total building bills: ${formatMoney(bills.total)}.`);
       return;
     }
 
     group.userData.lastRentPaidAt = now;
-    changeMoney(moneyRef.current - rent);
-    setMessage(`Home rent paid: ${formatMoney(rent)}.`);
+    changeMoney(moneyRef.current - bills.total);
+    setMessage(`Building bills paid: ${formatMoney(bills.total)}.`);
     setIncomeRefresh((value) => value + 1);
-
     saveCity();
   };
 
@@ -2433,7 +2441,62 @@ export default function GameCanvas() {
             CAR_ACCELERATION,
             deltaSeconds
           );
+          car.stuckSeconds += deltaSeconds;
+
+          // Recover from a blocked/deadlocked route: release stale junction
+          // claims and make a safe U-turn onto the previous or clearest road.
+          if (car.stuckSeconds >= 7) {
+            releaseIntersection(car);
+            const neighbors = getRoadNeighbors(car.x, car.z);
+            const candidates = neighbors
+              .map((next) => ({ x: car.x + next.x, z: car.z + next.z, dx: next.x, dz: next.z }))
+              .sort((a, b) => {
+                const aBack = a.x === car.previousX && a.z === car.previousZ ? -1 : 0;
+                const bBack = b.x === car.previousX && b.z === car.previousZ ? -1 : 0;
+                return aBack - bBack;
+              });
+            const safeTarget = candidates.find((next) => {
+              if (isIntersection(next.x, next.z) && intersectionOwner.current && intersectionOwner.current !== car) return false;
+              return !cars.current.some((other) => {
+                if (other === car) return false;
+                const pos = getCarWorldPosition(other);
+                const targetPos = worldPosition(next.x, next.z);
+                return Math.hypot(pos.x - targetPos.x, pos.z - targetPos.z) < 3.1;
+              });
+            });
+
+            if (safeTarget) {
+              car.queuedIntersection = null;
+              car.queuedTargetX = null;
+              car.queuedTargetZ = null;
+              car.tx = safeTarget.x;
+              car.tz = safeTarget.z;
+              car.progress = 0;
+              car.waiting = false;
+              car.currentSpeed = CAR_MIN_SPEED;
+              car.stuckSeconds = 0;
+              car.laneStartX = car.laneEndX;
+              car.laneStartZ = car.laneEndZ;
+              const lane = getLaneOffset(safeTarget.dx, safeTarget.dz);
+              car.laneEndX = lane.x;
+              car.laneEndZ = lane.z;
+              car.targetHeading = Math.atan2(safeTarget.dx, safeTarget.dz);
+              if (isIntersection(safeTarget.x, safeTarget.z)) {
+                intersectionOwner.current = car;
+                car.reservedIntersection = gridKey(safeTarget.x, safeTarget.z);
+              }
+            }
+          }
           return;
+        }
+
+        car.stuckSeconds = car.currentSpeed < 0.045
+          ? car.stuckSeconds + deltaSeconds
+          : 0;
+        if (car.stuckSeconds >= 7 && !car.waiting) {
+          car.waiting = true;
+          car.tx = car.x;
+          car.tz = car.z;
         }
 
         const currentPosition = carPositions[index];
@@ -2535,6 +2598,7 @@ export default function GameCanvas() {
           car.x = car.tx;
           car.z = car.tz;
           car.progress = 0;
+          car.stuckSeconds = 0;
 
           chooseCarNextTile(car);
         }
@@ -2571,8 +2635,7 @@ export default function GameCanvas() {
       });
 
       // --------------------------------------------------
-      // AIRCRAFT: unlock after two 3-tile runway models
-      // (six runway blocks total). Aircraft launch one by one.
+      // AIRCRAFT: unlock after two one-tile runway models. Aircraft launch one by one.
       // --------------------------------------------------
       const runwayGroups = getRunwayGroups(gridData.current);
       if (runwayGroups.length < 2 && airplanes.current.length > 0) {
@@ -2602,12 +2665,14 @@ export default function GameCanvas() {
           const laneOffset = (modelIndex - 1) * 2.05;
           const start = runwayStart.clone().addScaledVector(side, laneOffset);
           plane.position.copy(start);
-          plane.rotation.y = runwayRotation + Math.PI / 2;
+          const orientationOffset = modelIndex < 2 ? Math.PI / 2 : 0;
+          const aircraftHeading = runwayRotation + Math.PI / 2 + orientationOffset;
+          plane.rotation.y = aircraftHeading;
           scene.add(plane);
           airplanes.current.push({
             mesh: plane, modelIndex, phase: 'parked', phaseStartedAt: epoch + modelIndex * 9000,
             runwayStart: start, runwayEnd: runwayEnd.clone().addScaledVector(side, laneOffset),
-            laneOffset, heading: runwayRotation + Math.PI / 2
+            laneOffset, heading: aircraftHeading, orientationOffset
           });
         });
       }
@@ -2639,7 +2704,7 @@ export default function GameCanvas() {
           } else if (plane.phase === 'holding') {
             const angle = elapsed / 4500 + plane.modelIndex * 2.1;
             plane.mesh.position.set(Math.cos(angle) * 7, 24 + Math.sin(angle * 2) * 1.2, Math.sin(angle) * 7);
-            plane.mesh.rotation.y = angle + Math.PI / 2;
+            plane.mesh.rotation.y = angle + Math.PI / 2 + plane.orientationOffset;
             if (elapsed >= AIRPLANE_HOLD_MS) { plane.phase = 'returning'; plane.phaseStartedAt = now; }
           } else if (plane.phase === 'returning') {
             const t = THREE.MathUtils.clamp(elapsed / 9000, 0, 1);
@@ -2726,17 +2791,16 @@ export default function GameCanvas() {
         ) * selectedHourlyIncome
       : 0;
 
-  const selectedHomeRent =
-    selectedBuilding?.category === 'building'
-      ? HOME_RENT_BY_LEVEL[selectedBuilding.level] || HOME_RENT_BY_LEVEL[7]
-      : 0;
+  const selectedBills = selectedBuilding && selectedBuilding.category !== 'road'
+    ? getBuildingBills(selectedBuilding.category, selectedBuilding.level)
+    : null;
 
   const rentLastPaidAt = selectedGroup
     ? Number(selectedGroup.userData.lastRentPaidAt || Date.now())
     : Date.now();
 
   const rentIsDue =
-    selectedBuilding?.category === 'building' &&
+    !!selectedBuilding && selectedBuilding.category !== 'road' &&
     Date.now() - rentLastPaidAt >= HOUR_MS;
 
   // ======================================================
@@ -2905,26 +2969,6 @@ export default function GameCanvas() {
                 />
               </div>
 
-              <div className="mb-3 rounded-lg bg-white/5 p-2">
-                <p className="text-[10px] text-slate-400">Hourly home rent</p>
-                <p className="mt-1 text-lg font-bold text-amber-300">
-                  {formatMoney(selectedHomeRent)}
-                </p>
-                <p className="mt-1 text-[9px] text-slate-400">
-                  Home rent is a city expense, not collectable income.
-                </p>
-              </div>
-
-              <button
-                onClick={paySelectedHomeRent}
-                disabled={!rentIsDue || money < selectedHomeRent}
-                className="mb-3 w-full rounded-lg bg-amber-600 py-2.5 text-xs font-bold hover:bg-amber-500 disabled:opacity-40"
-              >
-                {rentIsDue
-                  ? `PAY RENT · ${formatMoney(selectedHomeRent)}`
-                  : 'RENT NOT DUE YET'}
-              </button>
-
               <button
                 onClick={handleUpgrade}
                 disabled={
@@ -2944,7 +2988,29 @@ export default function GameCanvas() {
             </>
           )}
 
-          {/* SHOP AND GOVERNMENT INCOME */}
+          {/* HOURLY BUILDING BILLS */}
+          {selectedBills && (
+            <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-950/25 p-2.5">
+              <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-amber-300">Hourly building bills</p>
+              <div className="space-y-1 text-[10px]">
+                <div className="flex justify-between"><span className="text-slate-300">Rent</span><span>{formatMoney(selectedBills.rent)}</span></div>
+                <div className="flex justify-between"><span className="text-slate-300">Gas bill</span><span>{formatMoney(selectedBills.gas)}</span></div>
+                <div className="flex justify-between"><span className="text-slate-300">Electricity bill</span><span>{formatMoney(selectedBills.electricity)}</span></div>
+                <div className="flex justify-between"><span className="text-slate-300">Water bill</span><span>{formatMoney(selectedBills.water)}</span></div>
+                <div className="flex justify-between"><span className="text-slate-300">Maintenance</span><span>{formatMoney(selectedBills.maintenance)}</span></div>
+                <div className="mt-2 flex justify-between border-t border-white/15 pt-2 text-xs font-bold"><span>Total per hour</span><span className="text-amber-300">{formatMoney(selectedBills.total)}</span></div>
+              </div>
+              <button
+                onClick={paySelectedHomeRent}
+                disabled={!rentIsDue || money < selectedBills.total}
+                className="mt-3 w-full rounded-lg bg-amber-600 py-2 text-[10px] font-bold hover:bg-amber-500 disabled:opacity-40"
+              >
+                {rentIsDue ? `PAY ALL BILLS · ${formatMoney(selectedBills.total)}` : 'BILLS NOT DUE YET'}
+              </button>
+            </div>
+          )}
+
+          {/* SHOP, GOVERNMENT AND MARKET INCOME */}
           {(selectedBuilding.category === 'shop' ||
             selectedBuilding.category === 'gov' ||
             selectedBuilding.category === 'market') && (
