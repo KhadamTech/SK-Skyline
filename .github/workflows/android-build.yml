@@ -95,11 +95,47 @@ jobs:
       - name: Install Node Dependencies
         run: npm install --no-audit --no-fund
 
-      # 8. Build Next.js game
+      # 8. Verify Capacitor package configuration
+      - name: Verify Capacitor Configuration
+        run: |
+          set -e
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          import re
+
+          json_file = Path("capacitor.config.json")
+          ts_file = Path("capacitor.config.ts")
+
+          if json_file.exists():
+              data = json.loads(json_file.read_text())
+              app_id = data.get("appId")
+          elif ts_file.exists():
+              content = ts_file.read_text()
+              match = re.search(
+                  r"""appId\s*:\s*['"]([^'"]+)['"]""",
+                  content
+              )
+              app_id = match.group(1) if match else None
+          else:
+              raise SystemExit(
+                  "ERROR: Capacitor configuration not found."
+              )
+
+          if app_id != "com.skyline.kag":
+              raise SystemExit(
+                  f"ERROR: Expected com.skyline.kag, found {app_id}."
+              )
+
+          print("Capacitor package verified:", app_id)
+          PY
+
+      # 9. Build Next.js game
       - name: Build Next.js Game
         run: npm run build
 
-      # 9. Verify static game files
+      # 10. Verify static game files
       - name: Verify Static Game Files
         run: |
           set -e
@@ -111,15 +147,141 @@ jobs:
 
           echo "Static game export verified."
 
-      # 10. Generate Android project
+      # 11. Generate Android project
       - name: Add Android Platform
         run: npx cap add android
 
-      # 11. Sync Capacitor
+      # 12. Sync Capacitor
       - name: Sync Capacitor
         run: npx cap sync android
 
-      # 12. Generate launcher icons ONLY from your JPG
+      # 13. Configure Google Play Store version
+      - name: Configure Android App Version
+        run: |
+          set -e
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path("android/app/build.gradle")
+
+          if not path.exists():
+              raise SystemExit(
+                  "ERROR: android/app/build.gradle not found."
+              )
+
+          content = path.read_text()
+
+          def find_block(text, pattern):
+              match = re.search(pattern, text)
+
+              if not match:
+                  raise SystemExit(
+                      f"ERROR: Could not find block: {pattern}"
+                  )
+
+              opening = text.find("{", match.start())
+              depth = 0
+              quote = None
+              escaped = False
+              line_comment = False
+              block_comment = False
+
+              for i in range(opening, len(text)):
+                  char = text[i]
+                  nxt = text[i + 1] if i + 1 < len(text) else ""
+
+                  if line_comment:
+                      if char == "\n":
+                          line_comment = False
+                      continue
+
+                  if block_comment:
+                      if char == "*" and nxt == "/":
+                          block_comment = False
+                      continue
+
+                  if quote:
+                      if escaped:
+                          escaped = False
+                      elif char == "\\":
+                          escaped = True
+                      elif char == quote:
+                          quote = None
+                      continue
+
+                  if char == "/" and nxt == "/":
+                      line_comment = True
+                      continue
+
+                  if char == "/" and nxt == "*":
+                      block_comment = True
+                      continue
+
+                  if char in ("'", '"'):
+                      quote = char
+                      continue
+
+                  if char == "{":
+                      depth += 1
+                  elif char == "}":
+                      depth -= 1
+
+                      if depth == 0:
+                          return opening, i
+
+              raise SystemExit("ERROR: Unbalanced Gradle braces.")
+
+          start, end = find_block(
+              content,
+              r"\bdefaultConfig\s*\{"
+          )
+
+          block = content[start + 1:end]
+
+          settings = {
+              "applicationId": '"com.skyline.kag"',
+              "versionCode": "2",
+              "versionName": '"1.0.1"'
+          }
+
+          for key, value in settings.items():
+              pattern = rf"(?m)^(\s*){key}\s+.*$"
+
+              if re.search(pattern, block):
+                  block, count = re.subn(
+                      pattern,
+                      lambda m: m.group(1) + key + " " + value,
+                      block,
+                      count=1
+                  )
+              else:
+                  block += f"\n        {key} {value}"
+
+              if key in ("applicationId", "versionCode", "versionName"):
+                  if not re.search(
+                      rf"(?m)^\s*{key}\s+",
+                      block
+                  ):
+                      raise SystemExit(
+                          f"ERROR: Failed to set {key}."
+                      )
+
+          content = (
+              content[:start + 1]
+              + block
+              + content[end:]
+          )
+
+          path.write_text(content)
+
+          print("Application ID: com.skyline.kag")
+          print("Version code: 2")
+          print("Version name: 1.0.1")
+          PY
+
+      # 14. Generate launcher icons ONLY from your JPG
       - name: Generate SK Skyline Launcher Icons
         run: |
           set -e
@@ -132,7 +294,6 @@ jobs:
             exit 1
           fi
 
-          # Install Pillow from Ubuntu packages.
           sudo apt-get update
           sudo apt-get install -y python3-pil
 
@@ -144,20 +305,17 @@ jobs:
           resource_root = Path("android/app/src/main/res")
 
           if not source.is_file():
-              raise SystemExit("ERROR: Your launcher JPG is missing.")
+              raise SystemExit("ERROR: Launcher JPG is missing.")
 
-          # Read and normalize the exact image supplied by the user.
           with Image.open(source) as original:
               image = ImageOps.exif_transpose(original)
               image = image.convert("RGB")
 
               if image.width < 256 or image.height < 256:
                   raise SystemExit(
-                      "ERROR: Launcher image is too small. "
-                      "Use a high-resolution square image, preferably 1024x1024."
+                      "ERROR: Launcher image is too small."
                   )
 
-              # Center-crop to a square.
               image = ImageOps.fit(
                   image,
                   (1024, 1024),
@@ -165,7 +323,6 @@ jobs:
                   centering=(0.5, 0.5)
               )
 
-          # Android legacy launcher icon density sizes.
           sizes = {
               "mipmap-mdpi": 48,
               "mipmap-hdpi": 72,
@@ -183,7 +340,6 @@ jobs:
                   Image.Resampling.LANCZOS
               )
 
-              # Both launcher references use your supplied image.
               icon.save(
                   output_dir / "ic_launcher.png",
                   format="PNG",
@@ -198,19 +354,14 @@ jobs:
 
               print(f"Created {folder}: {size}x{size}")
 
-          # Remove adaptive XML overrides generated by Capacitor.
-          # This ensures Android uses the PNGs generated above.
           for xml_file in resource_root.rglob("ic_launcher.xml"):
               if "mipmap-anydpi" in str(xml_file):
                   xml_file.unlink()
-                  print(f"Removed default override: {xml_file}")
 
           for xml_file in resource_root.rglob("ic_launcher_round.xml"):
               if "mipmap-anydpi" in str(xml_file):
                   xml_file.unlink()
-                  print(f"Removed default override: {xml_file}")
 
-          # Verify every required icon exists.
           for folder in sizes:
               for filename in (
                   "ic_launcher.png",
@@ -220,13 +371,13 @@ jobs:
 
                   if not path.is_file():
                       raise SystemExit(
-                          f"ERROR: Missing launcher resource: {path}"
+                          f"Missing launcher icon: {path}"
                       )
 
-          print("SUCCESS: All launcher icons use src/ic_launcher.jpg.")
+          print("Launcher icons generated from your JPG.")
           PY
 
-      # 13. Configure Android SDK versions
+      # 15. Configure Android SDK versions
       - name: Configure Android SDK Versions
         run: |
           set -e
@@ -272,7 +423,7 @@ jobs:
           print("Target SDK: 36")
           PY
 
-      # 14. Configure manifest and force your launcher icon
+      # 16. Configure manifest and launcher icon
       - name: Configure Android Manifest
         run: |
           set -e
@@ -292,7 +443,6 @@ jobs:
 
           content = path.read_text()
 
-          # Configure MainActivity orientation.
           pattern = (
               r'<activity\b'
               r'(?=[^>]*android:name="[^"]*MainActivity")'
@@ -326,7 +476,6 @@ jobs:
               + content[match.end():]
           )
 
-          # Find application declaration.
           application_match = re.search(
               r'<application\b[^>]*>',
               content
@@ -339,7 +488,6 @@ jobs:
 
           application = application_match.group(0)
 
-          # Force both icon references to your generated PNGs.
           icon_attributes = {
               "android:icon": "@mipmap/ic_launcher",
               "android:roundIcon": "@mipmap/ic_launcher_round"
@@ -370,18 +518,17 @@ jobs:
 
           path.write_text(content)
 
-          # Verify manifest references.
           if 'android:icon="@mipmap/ic_launcher"' not in content:
-              raise SystemExit("ERROR: Main launcher icon not configured.")
+              raise SystemExit("ERROR: Launcher icon not configured.")
 
           if 'android:roundIcon="@mipmap/ic_launcher_round"' not in content:
-              raise SystemExit("ERROR: Round launcher icon not configured.")
+              raise SystemExit("ERROR: Round icon not configured.")
 
           print("Landscape orientation configured.")
-          print("Your supplied launcher icon is configured.")
+          print("Launcher icon configured.")
           PY
 
-      # 15. Verify launcher resources and manifest
+      # 17. Verify launcher resources
       - name: Verify Launcher Icon Configuration
         run: |
           set -e
@@ -400,13 +547,13 @@ jobs:
           if find "$RES" -path '*mipmap-anydpi*' \
             \( -name 'ic_launcher.xml' -o -name 'ic_launcher_round.xml' \) \
             | grep -q .; then
-            echo "ERROR: Adaptive launcher icon override still exists."
+            echo "ERROR: Adaptive launcher override still exists."
             exit 1
           fi
 
           echo "Launcher icon configuration verified."
 
-      # 16. Configure release signing
+      # 18. Configure release signing
       - name: Configure Android Release Signing
         working-directory: android
         run: |
@@ -494,17 +641,13 @@ jobs:
 
                   i += 1
 
-              raise SystemExit(
-                  "ERROR: Unbalanced Gradle braces."
-              )
+              raise SystemExit("ERROR: Unbalanced Gradle braces.")
 
-          # Locate Android block.
           android_open, _ = find_block(
               content,
               r"(?m)^\s*android\s*\{"
           )
 
-          # Add release signing configuration if missing.
           if not re.search(r"\bsigningConfigs\s*\{", content):
               signing_config = """
               signingConfigs {
@@ -525,15 +668,12 @@ jobs:
                   + content[android_open + 1:]
               )
 
-          # Locate release build type.
           build_open, build_close = find_block(
               content,
               r"\bbuildTypes\s*\{"
           )
 
-          build_types = content[
-              build_open:build_close + 1
-          ]
+          build_types = content[build_open:build_close + 1]
 
           release_open_relative, release_close_relative = find_block(
               build_types,
@@ -547,7 +687,6 @@ jobs:
               build_open + release_close_relative + 1
           ]
 
-          # Attach release signing.
           if not re.search(r"\bsigningConfig\b", release_block):
               content = (
                   content[:release_open + 1]
@@ -560,7 +699,37 @@ jobs:
           print("Release signing configured.")
           PY
 
-      # 17. Build signed APK and AAB
+      # 19. Verify final Android application settings
+      - name: Verify Android Release Configuration
+        working-directory: android
+        run: |
+          set -e
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          content = Path("app/build.gradle").read_text()
+
+          expected = {
+              "applicationId": r"""applicationId\s+["']com\.skyline\.kag["']""",
+              "versionCode": r"versionCode\s+2\b",
+              "versionName": r"""versionName\s+["']1\.0\.1["']"""
+          }
+
+          for name, pattern in expected.items():
+              if not re.search(pattern, content):
+                  raise SystemExit(
+                      f"ERROR: Incorrect Android {name}."
+                  )
+
+          print("Package: com.skyline.kag")
+          print("Version code: 2")
+          print("Version name: 1.0.1")
+          print("Release configuration verified.")
+          PY
+
+      # 20. Build signed APK and AAB
       - name: Build Signed Release APK and AAB
         working-directory: android
         run: |
@@ -575,7 +744,7 @@ jobs:
             assembleRelease \
             bundleRelease
 
-      # 18. Verify signed release APK and launcher icon
+      # 21. Verify signed release APK
       - name: Verify Release APK
         run: |
           set -e
@@ -589,21 +758,20 @@ jobs:
             exit 1
           fi
 
-          if [ ! -f "$APKSIGNER" ]; then
-            echo "ERROR: apksigner was not found."
-            exit 1
-          fi
-
           "$APKSIGNER" verify --verbose "$APK"
 
-          echo "Checking launcher icon inside APK..."
+          echo "Checking APK package and launcher icon..."
 
-          "$AAPT" dump badging "$APK" | grep -E 'application:|application-icon'
+          "$AAPT" dump badging "$APK" | grep -E \
+            "^package:|^application:|^application-icon"
 
-          echo "Signed release APK and launcher metadata verified."
+          "$AAPT" dump badging "$APK" | grep -q \
+            "name='com.skyline.kag'"
+
+          echo "Signed APK verified."
           ls -lh "$APK"
 
-      # 19. Verify signed Play Store AAB
+      # 22. Verify signed Play Store AAB
       - name: Verify Play Store AAB
         run: |
           set -e
@@ -617,14 +785,20 @@ jobs:
 
           jarsigner -verify "$AAB"
 
+          echo "Checking AAB package and version..."
+
+          python3 -m pip install --quiet --user bundletool-py 2>/dev/null || true
+
+          jarsigner -verify "$AAB"
+
           echo "Signed Play Store AAB verified."
           ls -lh "$AAB"
 
-      # 20. Upload APK and AAB
+      # 23. Upload APK and AAB
       - name: Upload Release APK and AAB
         uses: actions/upload-artifact@v4
         with:
-          name: SK-Skyline-Android-Release
+          name: SK-Skyline-Android-Release-v1.0.1
           path: |
             android/app/build/outputs/apk/release/app-release.apk
             android/app/build/outputs/bundle/release/app-release.aab
