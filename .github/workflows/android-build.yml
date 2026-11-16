@@ -123,7 +123,7 @@ jobs:
                   "ERROR: Capacitor configuration not found."
               )
 
-          if app_id != "com.skyline.kag":
+          if app_id != "com.skylines.kag":
               raise SystemExit(
                   f"ERROR: Expected com.skylines.kag, found {app_id}."
               )
@@ -241,7 +241,7 @@ jobs:
           block = content[start + 1:end]
 
           settings = {
-              "applicationId": '"com.skyline.kag"',
+              "applicationId": '"com.skylines.kag"',
               "versionCode": "2",
               "versionName": '"1.0.1"'
           }
@@ -276,7 +276,7 @@ jobs:
 
           path.write_text(content)
 
-          print("Application ID: com.skyline.kag")
+          print("Application ID: com.skylines.kag")
           print("Version code: 2")
           print("Version name: 1.0.1")
           PY
@@ -766,7 +766,7 @@ jobs:
             "^package:|^application:|^application-icon"
 
           "$AAPT" dump badging "$APK" | grep -q \
-            "name='com.skyline.kag'"
+            "name='com.skylines.kag'"
 
           echo "Signed APK verified."
           ls -lh "$APK"
