@@ -10,8 +10,8 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 // SK SKYLINE CITY BUILDER
 // ======================================================
 
-const GRID_SIZE = 40;
-const TILE_SIZE = 4;
+const GRID_SIZE = 80;
+const TILE_SIZE = 2;
 const WORLD_SIZE = GRID_SIZE * TILE_SIZE;
 const HALF_WORLD = WORLD_SIZE / 2;
 
@@ -139,7 +139,7 @@ type SavedCityItem = {
 };
 
 type SavedCity = {
-  version: 1;
+  version: 1 | 2;
   savedAt: number;
   money: number;
   population: number;
@@ -256,19 +256,19 @@ function worldPosition(x: number, z: number) {
 }
 
 function getFootprint(category: Category, modelPath = '') {
-  if (modelPath === '/models/market/runway.glb') {
-    return { width: 1, depth: 1 };
-  }
-
-  if (category === 'building' || category === 'shop' || category === 'market') {
-    return { width: 2, depth: 2 };
-  }
-
-  if (category === 'gov') {
-    return { width: 3, depth: 3 };
-  }
-
-  return { width: 1, depth: 1 };
+  // Grid cells are now half the previous world size. These footprints keep
+  // ordinary buildings at their former world dimensions while allowing roads
+  // and small props to occupy smaller, independently placeable cells.
+  if (modelPath === '/models/market/runway.glb') return { width: 6, depth: 2 };
+  if (category === 'road') return { width: 1, depth: 1 };
+  if (modelPath.includes('shopping_center2')) return { width: 8, depth: 8 };
+  if (modelPath.includes('shopping_center1')) return { width: 6, depth: 6 };
+  if (modelPath.includes('factory1') || modelPath.includes('power_plant') || modelPath.includes('giant_office')) return { width: 8, depth: 8 };
+  if (modelPath.includes('factory') || modelPath.includes('police_station') || modelPath.includes('airport_buildings')) return { width: 6, depth: 6 };
+  if (modelPath.includes('airport_transport')) return { width: 6, depth: 4 };
+  if (category === 'gov') return { width: 4, depth: 4 };
+  if (category === 'building' || category === 'shop' || category === 'market') return { width: 4, depth: 4 };
+  return { width: 2, depth: 2 };
 }
 
 function getHourlyIncome(category: Category): number {
@@ -634,99 +634,91 @@ function prepareCarModel(template: THREE.Object3D): THREE.Group {
 // INCOME LABELS
 // ======================================================
 
-function createIncomeLabel(): THREE.Sprite {
+function createStatusIcon(symbol: string, color: string): THREE.Sprite {
   const canvas = document.createElement('canvas');
-  canvas.width = 256;
-  canvas.height = 64;
-
+  canvas.width = 128;
+  canvas.height = 128;
   const context = canvas.getContext('2d');
-
   if (context) {
-    context.fillStyle = 'rgba(5, 20, 15, 0.88)';
     context.beginPath();
-    context.roundRect(4, 4, 248, 56, 12);
+    context.arc(64, 64, 54, 0, Math.PI * 2);
+    context.fillStyle = 'rgba(8, 15, 25, 0.94)';
     context.fill();
-
-    context.fillStyle = '#86efac';
-    context.font = 'bold 21px Arial';
+    context.lineWidth = 7;
+    context.strokeStyle = color;
+    context.stroke();
+    context.fillStyle = color;
+    context.font = 'bold 78px Arial';
     context.textAlign = 'center';
     context.textBaseline = 'middle';
-    context.fillText('$2500 / hour', 128, 32);
+    context.fillText(symbol, 64, 67);
   }
-
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: texture, transparent: true, depthTest: false
+  }));
+  sprite.scale.set(1.05, 1.05, 1);
+  sprite.renderOrder = 20;
+  return sprite;
+}
 
-  const sprite = new THREE.Sprite(
-    new THREE.SpriteMaterial({
-      map: texture,
-      transparent: true,
-      depthTest: false
-    })
-  );
-
-  sprite.scale.set(2.45, 0.62, 1);
+function createIncomeLabel(): THREE.Sprite {
+  const sprite = createStatusIcon('$', '#4ade80');
   sprite.position.set(0, 4.2, 0);
-  sprite.renderOrder = 10;
-
+  sprite.visible = false;
   return sprite;
 }
 
 function updateIncomeLabel(group: THREE.Group, now: number) {
   const hourlyIncome = Number(group.userData.hourlyIncome || 0);
-  if (hourlyIncome <= 0) return;
-
-  const lastCollectedAt = Number(group.userData.lastCollectedAt || now);
-  const elapsed = Math.max(0, now - lastCollectedAt);
-  const completedHours = Math.floor(elapsed / HOUR_MS);
-  const readyAmount = completedHours * hourlyIncome;
-
   const sprite = group.userData.incomeSprite as THREE.Sprite | undefined;
-  if (!sprite) return;
-
-  const canvas = document.createElement('canvas');
-  canvas.width = 256;
-  canvas.height = 64;
-
-  const context = canvas.getContext('2d');
-  if (!context) return;
-
-  context.fillStyle = 'rgba(5, 20, 15, 0.9)';
-  context.beginPath();
-  context.roundRect(4, 4, 248, 56, 12);
-  context.fill();
-
-  context.textAlign = 'center';
-  context.textBaseline = 'middle';
-
-  if (readyAmount > 0) {
-    context.fillStyle = '#86efac';
-    context.font = 'bold 21px Arial';
-    context.fillText(`+$${readyAmount.toLocaleString()} READY`, 128, 32);
-  } else {
-    const remaining = Math.max(0, HOUR_MS - elapsed);
-    const minutes = Math.ceil(remaining / 60000);
-
-    context.fillStyle = '#facc15';
-    context.font = 'bold 18px Arial';
-    context.fillText(
-      `${formatMoney(hourlyIncome)} / hour · ${minutes} min`,
-      128,
-      32
-    );
-  }
-
-  const material = sprite.material as THREE.SpriteMaterial;
-  const oldTexture = material.map;
-  const texture = new THREE.CanvasTexture(canvas);
-
-  texture.colorSpace = THREE.SRGBColorSpace;
-  material.map = texture;
-  material.needsUpdate = true;
-  oldTexture?.dispose();
-
+  if (!sprite || hourlyIncome <= 0) return;
+  const lastCollectedAt = Number(group.userData.lastCollectedAt || now);
+  const completedHours = Math.floor(Math.max(0, now - lastCollectedAt) / HOUR_MS);
+  const readyAmount = completedHours * hourlyIncome;
+  sprite.visible = readyAmount > 0;
   group.userData.incomeReady = readyAmount;
-  group.userData.incomeUpdatedAt = now;
+}
+
+function createRentDueIcon(): THREE.Sprite {
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 128;
+  const context = canvas.getContext('2d');
+  if (context) {
+    context.beginPath();
+    context.moveTo(64, 119);
+    context.bezierCurveTo(53, 101, 23, 75, 23, 49);
+    context.arc(64, 49, 41, Math.PI, 0);
+    context.bezierCurveTo(105, 75, 75, 101, 64, 119);
+    context.closePath();
+    context.fillStyle = '#ef4444';
+    context.fill();
+    context.lineWidth = 6;
+    context.strokeStyle = '#fee2e2';
+    context.stroke();
+    context.beginPath();
+    context.arc(64, 48, 14, 0, Math.PI * 2);
+    context.fillStyle = '#fff7ed';
+    context.fill();
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false }));
+  sprite.scale.set(1.05, 1.25, 1);
+  sprite.position.set(0, 5.25, 0);
+  sprite.renderOrder = 21;
+  sprite.visible = false;
+  return sprite;
+}
+
+function updateRentDueIcon(group: THREE.Group, now: number) {
+  const sprite = group.userData.rentDueSprite as THREE.Sprite | undefined;
+  if (!sprite) return;
+  const lastPaid = Number(group.userData.lastRentPaidAt || now);
+  sprite.visible = now - lastPaid >= HOUR_MS;
+  group.userData.rentDue = sprite.visible;
 }
 
 // ======================================================
@@ -862,7 +854,7 @@ export default function GameCanvas() {
   const addEnvironment = (scene: THREE.Scene) => {
     const terrain = new THREE.Mesh(
       new THREE.PlaneGeometry(WORLD_SIZE * 2, WORLD_SIZE * 2),
-      new THREE.MeshStandardMaterial({ color: 0x253e35, roughness: 1 })
+      new THREE.MeshStandardMaterial({ color: 0x4f8f45, roughness: 1 })
     );
 
     terrain.rotation.x = -Math.PI / 2;
@@ -872,7 +864,7 @@ export default function GameCanvas() {
 
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE),
-      new THREE.MeshStandardMaterial({ color: 0x718779, roughness: 1 })
+      new THREE.MeshStandardMaterial({ color: 0x70b957, roughness: 1 })
     );
 
     ground.rotation.x = -Math.PI / 2;
@@ -884,50 +876,17 @@ export default function GameCanvas() {
     const grid = new THREE.GridHelper(
       WORLD_SIZE,
       GRID_SIZE,
-      0x9eb8a8,
-      0x62786c
+      0x9fca88,
+      0x4c8c43
     );
 
     grid.position.y = 0.015;
     (grid.material as THREE.Material).transparent = true;
-    (grid.material as THREE.Material).opacity = 0.13;
+    (grid.material as THREE.Material).opacity = 0.28;
     scene.add(grid);
 
-    const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x65452e });
-    const leafMaterial = new THREE.MeshStandardMaterial({ color: 0x368454 });
+    // Trees intentionally removed: the entire buildable map is open grass.
 
-    for (let i = 0; i < 65; i++) {
-      const tree = new THREE.Group();
-
-      const trunk = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.13, 0.2, 1.5, 7),
-        trunkMaterial
-      );
-
-      trunk.position.y = 0.75;
-      trunk.castShadow = true;
-      tree.add(trunk);
-
-      const leaves = new THREE.Mesh(
-        new THREE.ConeGeometry(1, 2.3, 8),
-        leafMaterial
-      );
-
-      leaves.position.y = 2.3;
-      leaves.castShadow = true;
-      tree.add(leaves);
-
-      const angle = i * 2.399;
-      const radius = 43 + (i % 8) * 1.8;
-
-      tree.position.set(
-        Math.cos(angle) * radius,
-        0,
-        Math.sin(angle) * radius
-      );
-
-      scene.add(tree);
-    }
   };
 
   // ======================================================
@@ -1465,7 +1424,7 @@ export default function GameCanvas() {
       });
 
       const data: SavedCity = {
-        version: 1,
+        version: 2,
         savedAt: Date.now(),
         money: moneyRef.current,
         population: populationRef.current,
@@ -1490,9 +1449,9 @@ export default function GameCanvas() {
     if (!model || !scene) return;
 
     const footprint = getFootprint(category, model.path);
-    const rotatedRunway = model.path === '/models/market/runway.glb' && Math.abs(Math.sin(rotationRef.current)) > 0.5;
-    const width = rotatedRunway ? footprint.depth : footprint.width;
-    const depth = rotatedRunway ? footprint.width : footprint.depth;
+    const rotated = Math.round(rotationRef.current / (Math.PI / 2)) % 2 !== 0;
+    const width = rotated ? footprint.depth : footprint.width;
+    const depth = rotated ? footprint.width : footprint.depth;
 
     if (!hasSpace(x, z, width, depth)) {
       setMessage('This location is occupied or outside city limits.');
@@ -1529,8 +1488,8 @@ export default function GameCanvas() {
       group.add(
         prepareModel(
           template,
-          width * TILE_SIZE * 0.92,
-          depth * TILE_SIZE * 0.92,
+          width * TILE_SIZE * (model.path === '/models/market/runway.glb' ? 1 : 0.96),
+          depth * TILE_SIZE * (model.path === '/models/market/runway.glb' ? 1 : 0.96),
           maxHeight
         )
       );
@@ -1549,6 +1508,13 @@ export default function GameCanvas() {
     group.userData.constructionCost = model.price;
     group.userData.rotation = rotationRef.current;
     group.userData.lastRentPaidAt = Date.now();
+    group.userData.populationContribution = POPULATION_VALUES[category];
+    group.userData.populationActive = true;
+    if (category !== 'road') {
+      const rentIcon = createRentDueIcon();
+      group.userData.rentDueSprite = rentIcon;
+      group.add(rentIcon);
+    }
 
     const hourlyIncome = getHourlyIncome(category);
 
@@ -1627,13 +1593,32 @@ export default function GameCanvas() {
 
     if (!item) return;
 
+    const group = item.mesh;
+    const oldWidth = Number(group.userData.width || 1);
+    const oldDepth = Number(group.userData.depth || 1);
+    const nextWidth = oldDepth;
+    const nextDepth = oldWidth;
+    const centerX = Number(group.userData.gx) + (oldWidth - 1) / 2;
+    const centerZ = Number(group.userData.gz) + (oldDepth - 1) / 2;
+    const nextX = Math.round(centerX - (nextWidth - 1) / 2);
+    const nextZ = Math.round(centerZ - (nextDepth - 1) / 2);
+    removeFromGrid(group);
+    if (!hasSpace(nextX, nextZ, nextWidth, nextDepth)) {
+      addToGrid(group, Number(group.userData.gx), Number(group.userData.gz), oldWidth, oldDepth,
+        item.category, item.level, item.driveable);
+      setMessage('Cannot rotate here because the new footprint is occupied.');
+      return;
+    }
+
     const nextRotation =
-      (Number(item.mesh.userData.rotation || 0) + Math.PI / 2) %
-      (Math.PI * 2);
+      (Number(group.userData.rotation || 0) + Math.PI / 2) % (Math.PI * 2);
+    group.rotation.y = nextRotation;
+    group.userData.rotation = nextRotation;
+    const position = worldPosition(centerX, centerZ);
+    group.position.set(position.x, 0.02, position.z);
+    addToGrid(group, nextX, nextZ, nextWidth, nextDepth, item.category, item.level, item.driveable);
 
-    item.mesh.rotation.y = nextRotation;
-    item.mesh.userData.rotation = nextRotation;
-
+    setSelectedBuilding({ ...selectedBuilding, x: nextX, z: nextZ });
     setMessage('Item rotated 90 degrees.');
     saveCity();
   };
@@ -1800,7 +1785,8 @@ export default function GameCanvas() {
     );
 
     const refund = Math.floor(originalCost * 0.5);
-    const populationLoss = POPULATION_VALUES[category];
+    const populationLoss = Number(group.userData.populationContribution ?? POPULATION_VALUES[category]);
+    const populationWasActive = group.userData.populationActive !== false;
 
     removeFromGrid(group);
     sceneRef.current?.remove(group);
@@ -1809,6 +1795,12 @@ export default function GameCanvas() {
 
     if (incomeSprite) {
       const material = incomeSprite.material as THREE.SpriteMaterial;
+      material.map?.dispose();
+      material.dispose();
+    }
+    const rentDueSprite = group.userData.rentDueSprite as THREE.Sprite | undefined;
+    if (rentDueSprite) {
+      const material = rentDueSprite.material as THREE.SpriteMaterial;
       material.map?.dispose();
       material.dispose();
     }
@@ -1825,7 +1817,7 @@ export default function GameCanvas() {
 
     changeMoney(moneyRef.current + refund);
 
-    if (populationLoss > 0) {
+    if (populationLoss > 0 && populationWasActive) {
       changePopulation(populationRef.current - populationLoss);
     }
 
@@ -1906,7 +1898,8 @@ export default function GameCanvas() {
     });
 
     changeMoney(moneyRef.current - cost);
-    changePopulation(populationRef.current + 20);
+    group.userData.populationContribution = Number(group.userData.populationContribution || POPULATION_VALUES.building) + 20;
+    if (group.userData.populationActive !== false) changePopulation(populationRef.current + 20);
 
     setSelectedBuilding({ ...selectedBuilding, level: nextLevel });
     setMessage(`Home upgraded to Level ${nextLevel} for ${formatMoney(cost)}.`);
@@ -1993,6 +1986,12 @@ export default function GameCanvas() {
     }
 
     group.userData.lastRentPaidAt = now;
+    updateRentDueIcon(group, now);
+    if (group.userData.populationActive === false) {
+      const contribution = Number(group.userData.populationContribution ?? POPULATION_VALUES[selectedBuilding.category]);
+      group.userData.populationActive = true;
+      changePopulation(populationRef.current + contribution);
+    }
     changeMoney(moneyRef.current - bills.total);
     setMessage(`Building bills paid: ${formatMoney(bills.total)}.`);
     setIncomeRefresh((value) => value + 1);
@@ -2014,8 +2013,12 @@ export default function GameCanvas() {
       if (raw) {
         const data = JSON.parse(raw) as SavedCity;
 
-        if (data.version === 1 && Array.isArray(data.items)) {
-          for (const saved of data.items) {
+        if ((data.version === 1 || data.version === 2) && Array.isArray(data.items)) {
+          for (const originalSaved of data.items) {
+            const saved = data.version === 1 ? {
+              ...originalSaved, x: originalSaved.x * 2, z: originalSaved.z * 2,
+              width: originalSaved.width * 2, depth: originalSaved.depth * 2
+            } : originalSaved;
             if (
               !saved ||
               !CATEGORIES[saved.category] ||
@@ -2057,8 +2060,8 @@ export default function GameCanvas() {
               group.add(
                 prepareModel(
                   template,
-                  saved.width * TILE_SIZE * 0.92,
-                  saved.depth * TILE_SIZE * 0.92,
+                  saved.width * TILE_SIZE * (saved.modelPath === '/models/market/runway.glb' ? 1 : 0.96),
+                  saved.depth * TILE_SIZE * (saved.modelPath === '/models/market/runway.glb' ? 1 : 0.96),
                   maxHeight
                 )
               );
@@ -2084,6 +2087,16 @@ export default function GameCanvas() {
             group.userData.lastCollectedAt = Number(
               saved.lastCollectedAt || Date.now()
             );
+            group.userData.populationContribution = saved.category === 'building'
+              ? POPULATION_VALUES.building + Math.max(0, Number(saved.level || 1) - 1) * 20
+              : POPULATION_VALUES[saved.category];
+            group.userData.populationActive = true;
+            if (saved.category !== 'road') {
+              const rentIcon = createRentDueIcon();
+              group.userData.rentDueSprite = rentIcon;
+              group.add(rentIcon);
+              updateRentDueIcon(group, Date.now());
+            }
 
             if (group.userData.hourlyIncome > 0) {
               const label = createIncomeLabel();
@@ -2203,10 +2216,25 @@ export default function GameCanvas() {
         if (item.category === 'shop' || item.category === 'gov' || item.category === 'market') {
           updateIncomeLabel(item.mesh, now);
         }
+        if (item.category !== 'road') {
+          const group = item.mesh;
+          const due = now - Number(group.userData.lastRentPaidAt || now) >= HOUR_MS;
+          updateRentDueIcon(group, now);
+          const active = group.userData.populationActive !== false;
+          if (due && active) {
+            const contribution = Number(group.userData.populationContribution ?? POPULATION_VALUES[item.category]);
+            group.userData.populationActive = false;
+            changePopulation(populationRef.current - contribution);
+          } else if (!due && !active) {
+            const contribution = Number(group.userData.populationContribution ?? POPULATION_VALUES[item.category]);
+            group.userData.populationActive = true;
+            changePopulation(populationRef.current + contribution);
+          }
+        }
       });
 
       setIncomeRefresh((value) => value + 1);
-    }, 30000);
+    }, 1000);
 
     return () => window.clearInterval(interval);
   }, []);
@@ -2650,7 +2678,7 @@ export default function GameCanvas() {
         const runwayRotation = Number(runway.userData.rotation || 0);
         const center = runway.position.clone();
         const forward = new THREE.Vector3(Math.cos(runwayRotation), 0, -Math.sin(runwayRotation)).normalize();
-        const side = new THREE.Vector3(forward.z, 0, -forward.x).normalize();
+        const side = new THREE.Vector3(-forward.z, 0, forward.x).normalize();
         const runwayLength = Math.max(runwayWidth, runwayDepth) * TILE_SIZE;
         const runwayStart = center.clone().addScaledVector(forward, -runwayLength * 0.42);
         const runwayEnd = center.clone().addScaledVector(forward, runwayLength * 0.42);
@@ -2662,11 +2690,14 @@ export default function GameCanvas() {
           const template = modelCache.current.get(path);
           if (!template) return;
           const plane = prepareModel(template, 2.2, 4.6, 2.8);
-          const laneOffset = (modelIndex - 1) * 2.05;
+          const laneOffset = (modelIndex - 1) * 1.15;
           const start = runwayStart.clone().addScaledVector(side, laneOffset);
           plane.position.copy(start);
+          // airplane1.glb and airplane2.glb have a 90-degree model-axis
+          // difference from airplane3.glb; compensate so every nose follows
+          // the same runway heading.
           const orientationOffset = modelIndex < 2 ? Math.PI / 2 : 0;
-          const aircraftHeading = runwayRotation + Math.PI / 2 + orientationOffset;
+          const aircraftHeading = Math.atan2(forward.x, forward.z) + orientationOffset;
           plane.rotation.y = aircraftHeading;
           scene.add(plane);
           airplanes.current.push({
@@ -2683,17 +2714,19 @@ export default function GameCanvas() {
           const elapsed = Math.max(0, now - plane.phaseStartedAt);
           const center = new THREE.Vector3(0, 0, 0);
           const cityOrbit = center.clone().add(new THREE.Vector3(plane.modelIndex * 3 - 3, 0, 0));
-          if (plane.phase === 'parked' && elapsed >= 0) {
+          if (plane.phase === 'parked' && now >= plane.phaseStartedAt) {
             plane.phase = 'taxi'; plane.phaseStartedAt = now;
           } else if (plane.phase === 'taxi') {
             const t = THREE.MathUtils.clamp(elapsed / 5000, 0, 1);
             plane.mesh.position.lerpVectors(plane.runwayStart, plane.runwayEnd, t);
+            plane.mesh.rotation.y = plane.heading;
             if (t >= 1) { plane.phase = 'takeoff'; plane.phaseStartedAt = now; }
           } else if (plane.phase === 'takeoff') {
             const t = THREE.MathUtils.clamp(elapsed / 6000, 0, 1);
             const target = plane.runwayEnd.clone().lerp(cityOrbit, t);
             target.y = 0.35 + t * 20;
             plane.mesh.position.copy(target);
+            plane.mesh.rotation.y = plane.heading;
             if (t >= 1) { plane.phase = 'outbound'; plane.phaseStartedAt = now; }
           } else if (plane.phase === 'outbound') {
             const t = THREE.MathUtils.clamp(elapsed / 5000, 0, 1);
@@ -2704,18 +2737,20 @@ export default function GameCanvas() {
           } else if (plane.phase === 'holding') {
             const angle = elapsed / 4500 + plane.modelIndex * 2.1;
             plane.mesh.position.set(Math.cos(angle) * 7, 24 + Math.sin(angle * 2) * 1.2, Math.sin(angle) * 7);
-            plane.mesh.rotation.y = angle + Math.PI / 2 + plane.orientationOffset;
+            plane.mesh.rotation.y = angle + Math.PI / 2;
             if (elapsed >= AIRPLANE_HOLD_MS) { plane.phase = 'returning'; plane.phaseStartedAt = now; }
           } else if (plane.phase === 'returning') {
             const t = THREE.MathUtils.clamp(elapsed / 9000, 0, 1);
             const target = new THREE.Vector3(0, 24, 0).lerp(plane.runwayEnd, t);
             target.y = 24 - t * 21;
             plane.mesh.position.copy(target);
+            plane.mesh.rotation.y = Math.atan2(plane.runwayEnd.x - plane.mesh.position.x, plane.runwayEnd.z - plane.mesh.position.z);
             if (t >= 1) { plane.phase = 'landing'; plane.phaseStartedAt = now; }
           } else if (plane.phase === 'landing') {
             const t = THREE.MathUtils.clamp(elapsed / 4500, 0, 1);
             plane.mesh.position.lerpVectors(plane.runwayEnd, plane.runwayStart, t);
             plane.mesh.position.y = 0.35;
+            plane.mesh.rotation.y = plane.heading + Math.PI;
             if (t >= 1) { plane.phase = 'parked'; plane.phaseStartedAt = now + 12000; plane.mesh.rotation.y = plane.heading; }
           }
         });
@@ -2891,7 +2926,7 @@ export default function GameCanvas() {
             {CATEGORY_NAMES[activeCategory]} Items
           </div>
 
-          <div className="flex max-h-[25vh] flex-wrap justify-center gap-2 overflow-y-auto">
+          <div className="flex max-h-[22vh] flex-wrap justify-center gap-1.5 overflow-y-auto">
             {CATEGORIES[activeCategory].map((model) => (
               <button
                 key={model.path}
@@ -2907,7 +2942,7 @@ export default function GameCanvas() {
                     `${model.name} selected. Price: ${formatMoney(model.price)}. Tap empty land to build.`
                   );
                 }}
-                className="rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700"
+                className="rounded-md border border-slate-600 bg-slate-800 px-2 py-1.5 text-[10px] font-semibold text-slate-200 hover:bg-slate-700"
               >
                 <span className="block">{model.name}</span>
                 <span className="mt-1 block text-[10px] font-bold text-green-400">
@@ -2938,9 +2973,9 @@ export default function GameCanvas() {
 
       {/* SELECTED BUILDING PANEL */}
       {selectedBuilding && !moveMode && (
-        <div className="ui-panel absolute right-3 top-16 z-30 max-h-[75vh] w-64 max-w-[78vw] overflow-y-auto rounded-xl border border-white/20 bg-slate-950/95 p-3 shadow-2xl backdrop-blur-xl">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-bold">
+        <div className="ui-panel absolute right-3 top-16 z-30 max-h-[68vh] w-56 max-w-[72vw] overflow-hidden rounded-lg border border-white/20 bg-slate-950/95 p-2 shadow-2xl backdrop-blur-xl">
+          <div className="mb-1.5 flex items-center justify-between">
+            <h2 className="text-xs font-bold">
               {CATEGORY_NAMES[selectedBuilding.category]}
             </h2>
 
@@ -2975,7 +3010,7 @@ export default function GameCanvas() {
                   selectedBuilding.level >= 7 ||
                   money < BUILDING_UPGRADE_PRICES[selectedBuilding.level]
                 }
-                className="w-full rounded-lg bg-blue-600 py-2.5 text-xs font-bold hover:bg-blue-500 disabled:opacity-40"
+                className="w-full rounded-lg bg-blue-600 py-1.5 text-[10px] font-bold hover:bg-blue-500 disabled:opacity-40"
               >
                 {selectedBuilding.level >= 7
                   ? 'MAX LEVEL'
@@ -2990,9 +3025,9 @@ export default function GameCanvas() {
 
           {/* HOURLY BUILDING BILLS */}
           {selectedBills && (
-            <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-950/25 p-2.5">
-              <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-amber-300">Hourly building bills</p>
-              <div className="space-y-1 text-[10px]">
+            <div className="mb-2 rounded-md border border-amber-500/30 bg-amber-950/25 p-1.5">
+              <p className="mb-2 text-[9px] font-bold uppercase tracking-wide text-amber-300">Hourly building bills</p>
+              <div className="space-y-0.5 text-[9px]">
                 <div className="flex justify-between"><span className="text-slate-300">Rent</span><span>{formatMoney(selectedBills.rent)}</span></div>
                 <div className="flex justify-between"><span className="text-slate-300">Gas bill</span><span>{formatMoney(selectedBills.gas)}</span></div>
                 <div className="flex justify-between"><span className="text-slate-300">Electricity bill</span><span>{formatMoney(selectedBills.electricity)}</span></div>
@@ -3014,7 +3049,7 @@ export default function GameCanvas() {
           {(selectedBuilding.category === 'shop' ||
             selectedBuilding.category === 'gov' ||
             selectedBuilding.category === 'market') && (
-            <div className="mb-3 rounded-lg border border-green-500/30 bg-green-950/30 p-3">
+            <div className="mb-2 rounded-md border border-green-500/30 bg-green-950/30 p-1.5">
               <p className="text-[10px] font-bold uppercase text-green-300">
                 Building income
               </p>
@@ -3030,7 +3065,7 @@ export default function GameCanvas() {
               <button
                 onClick={collectSelectedIncome}
                 disabled={selectedIncomeReady <= 0}
-                className="mt-3 w-full rounded-lg bg-green-600 py-2.5 text-xs font-bold hover:bg-green-500 disabled:opacity-40"
+                className="mt-3 w-full rounded-lg bg-green-600 py-1.5 text-[10px] font-bold hover:bg-green-500 disabled:opacity-40"
               >
                 {selectedIncomeReady > 0
                   ? `COLLECT ${formatMoney(selectedIncomeReady)}`
@@ -3045,7 +3080,7 @@ export default function GameCanvas() {
 
           <button
             onClick={rotateSelectedBuilding}
-            className="mb-2 w-full rounded-lg bg-purple-700 py-2.5 text-xs font-bold hover:bg-purple-600"
+            className="mb-2 w-full rounded-lg bg-purple-700 py-1.5 text-[10px] font-bold hover:bg-purple-600"
           >
             ↻ ROTATE 90°
           </button>
