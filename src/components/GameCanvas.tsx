@@ -32,7 +32,7 @@ const CAR_MIN_SPEED = 1.1;
 const CAR_ACCELERATION = 2.8;
 const CAR_STEERING_SPEED = 5;
 
-const STARTING_MONEY = 50000000;
+const STARTING_MONEY = 5000000;
 const HOUR_MS = 60 * 60 * 1000;
 
 const SAVE_KEY = 'sk-skyline-city-v1';
@@ -150,8 +150,6 @@ const CATEGORIES: Record<Category, ModelOption[]> = {
   road: [
     { name: 'Straight Road', path: '/models/roads/road.glb', price: 50 },
     { name: 'Road Lamp', path: '/models/roads/road_lamp.glb', price: 50 },
-    { name: 'Clock tower', path: '/models/roads/clock_chock.glb', price: 50 }, 
-    { name: 'Stop Sign', path: '/models/roads/stop_sign.glb', price: 50 }, 
     { name: 'Traffic Sign', path: '/models/roads/road_traffic_sign.glb', price: 50 }
   ],
   building: [
@@ -168,8 +166,6 @@ const CATEGORIES: Record<Category, ModelOption[]> = {
   ],
   market: [
     { name: 'Crypto Office', path: '/models/market/crypto_office.glb', price: 250000 },
-        { name: 'Apartment 1', path: '/models/market/apartment.glb', price: 300000 },
-        { name: 'Apartment 2', path: '/models/market/apartment1.glb', price: 350000 },
     { name: 'Factory', path: '/models/market/factory.glb', price: 500000 },
     { name: 'Factory 1', path: '/models/market/factory1.glb', price: 750000 },
     { name: 'Power Plant', path: '/models/market/power_plant.glb', price: 1500000 },
@@ -180,7 +176,6 @@ const CATEGORIES: Record<Category, ModelOption[]> = {
     { name: 'Gas Station 2', path: '/models/gov/gas_station2.glb', price: 250000 },
     { name: 'Giant Office', path: '/models/gov/giant_office_building.glb', price: 10000000 },
     { name: 'Gov Office', path: '/models/gov/gov_office1.glb', price: 500000 },
-    { name: 'University', path: '/models/gov/university.glb', price: 300000 },
     { name: 'Mini Office', path: '/models/gov/mini_office.glb', price: 100000 },
     { name: 'Old Office', path: '/models/gov/old_office_building.glb', price: 250000 },
     { name: 'Police Station 1', path: '/models/gov/police_station1.glb', price: 1000000 },
@@ -199,6 +194,23 @@ const BUILDING_UPGRADE_PRICES: Record<number, number> = {
   5: 75000,
   6: 1000000
 };
+
+// Each home upgrade becomes visibly taller while keeping exactly the same
+// occupied grid footprint. Values are world units, not grid-cell counts.
+const HOME_LEVEL_HEIGHTS: Record<number, number> = {
+  1: 8,
+  2: 12,
+  3: 16,
+  4: 21,
+  5: 27,
+  6: 34,
+  7: 42
+};
+
+function getHomeLevelHeight(level: number): number {
+  const safeLevel = Math.max(1, Math.min(7, Math.floor(level)));
+  return HOME_LEVEL_HEIGHTS[safeLevel];
+}
 
 const HOME_RENT_BY_LEVEL: Record<number, number> = {
   1: 500,
@@ -592,6 +604,45 @@ function prepareModel(
     model.position.z -= center.z * scaleY;
     model.position.y -= bounds.min.y * scaleY;
   }
+
+  model.traverse((object) => {
+    if (object instanceof THREE.Mesh) {
+      object.castShadow = true;
+      object.receiveShadow = true;
+    }
+  });
+
+  root.add(model);
+  return root;
+}
+
+/**
+ * Normalize a residential level model to the complete footprint already
+ * reserved by its grid item, while assigning a level-specific building
+ * height. X/Z are fitted to the exact footprint; Y grows at every upgrade.
+ */
+function prepareLevelBuildingModel(
+  template: THREE.Object3D,
+  width: number,
+  depth: number,
+  targetHeight: number
+): THREE.Group {
+  const root = new THREE.Group();
+  const model = template.clone(true);
+  model.updateMatrixWorld(true);
+
+  const bounds = new THREE.Box3().setFromObject(model);
+  const size = bounds.getSize(new THREE.Vector3());
+  const center = bounds.getCenter(new THREE.Vector3());
+
+  const scaleX = width / Math.max(size.x, 0.01);
+  const scaleY = targetHeight / Math.max(size.y, 0.01);
+  const scaleZ = depth / Math.max(size.z, 0.01);
+
+  model.scale.set(scaleX, scaleY, scaleZ);
+  model.position.x -= center.x * scaleX;
+  model.position.z -= center.z * scaleZ;
+  model.position.y -= bounds.min.y * scaleY;
 
   model.traverse((object) => {
     if (object instanceof THREE.Mesh) {
@@ -1531,13 +1582,20 @@ export default function GameCanvas() {
         category === 'road' ? 5 : 30;
 
       group.add(
-        prepareModel(
-          template,
-          width * TILE_SIZE,
-          depth * TILE_SIZE,
-          maxHeight,
-          true
-        )
+        category === 'building'
+          ? prepareLevelBuildingModel(
+              template,
+              width * TILE_SIZE,
+              depth * TILE_SIZE,
+              getHomeLevelHeight(1)
+            )
+          : prepareModel(
+              template,
+              width * TILE_SIZE,
+              depth * TILE_SIZE,
+              maxHeight,
+              true
+            )
       );
     }
 
@@ -1918,24 +1976,36 @@ export default function GameCanvas() {
 
     const group = item.mesh;
 
-    // Keep non-model children, such as any future labels.
+    // Remove only the previous building model. Keep status sprites and any
+    // other attached UI helpers so rent/income indicators survive upgrades.
     const oldChildren = [...group.children];
     oldChildren.forEach((child) => {
-      if (child.userData.keepOnUpgrade) return;
+      if (
+        child.userData.keepOnUpgrade ||
+        child === group.userData.rentDueSprite ||
+        child === group.userData.incomeSprite
+      ) {
+        return;
+      }
       group.remove(child);
     });
 
+    const reservedWidth = Number(group.userData.width || 4) * TILE_SIZE;
+    const reservedDepth = Number(group.userData.depth || 4) * TILE_SIZE;
+
     group.add(
-      prepareModel(
+      prepareLevelBuildingModel(
         template,
-        2 * TILE_SIZE * 0.92,
-        2 * TILE_SIZE * 0.92,
-        30
+        reservedWidth,
+        reservedDepth,
+        getHomeLevelHeight(nextLevel)
       )
     );
 
     group.userData.level = nextLevel;
     group.userData.modelPath = nextPath;
+    group.userData.width = reservedWidth / TILE_SIZE;
+    group.userData.depth = reservedDepth / TILE_SIZE;
     group.userData.constructionCost =
       Number(group.userData.constructionCost || 500) + cost;
 
@@ -2104,13 +2174,20 @@ export default function GameCanvas() {
                 saved.category === 'road' ? 5 : 30;
 
               group.add(
-                prepareModel(
-                  template,
-                  saved.width * TILE_SIZE,
-                  saved.depth * TILE_SIZE,
-                  maxHeight,
-                  true
-                )
+                saved.category === 'building'
+                  ? prepareLevelBuildingModel(
+                      template,
+                      saved.width * TILE_SIZE,
+                      saved.depth * TILE_SIZE,
+                      getHomeLevelHeight(Number(saved.level || 1))
+                    )
+                  : prepareModel(
+                      template,
+                      saved.width * TILE_SIZE,
+                      saved.depth * TILE_SIZE,
+                      maxHeight,
+                      true
+                    )
               );
             }
 
