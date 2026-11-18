@@ -242,8 +242,8 @@ jobs:
 
           settings = {
               "applicationId": '"com.skylines.kag"',
-              "versionCode": "2",
-              "versionName": '"1.0.1"'
+              "versionCode": "3",
+              "versionName": '"1.0.2"'
           }
 
           for key, value in settings.items():
@@ -277,8 +277,8 @@ jobs:
           path.write_text(content)
 
           print("Application ID: com.skylines.kag")
-          print("Version code: 2")
-          print("Version name: 1.0.1")
+          print("Version code: 3")
+          print("Version name: 1.0.2")
           PY
 
       # 14. Generate launcher icons ONLY from your JPG
@@ -798,7 +798,7 @@ jobs:
       - name: Upload Release APK and AAB
         uses: actions/upload-artifact@v4
         with:
-          name: SK-Skyline-Android-Release-v1.0.1
+          name: SK-Skyline-Android-Release-v1.0.2
           path: |
             android/app/build/outputs/apk/release/app-release.apk
             android/app/build/outputs/bundle/release/app-release.aab
