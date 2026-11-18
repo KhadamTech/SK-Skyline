@@ -713,8 +713,8 @@ jobs:
 
           expected = {
               "applicationId": r"""applicationId\s+["']com\.skylines\.kag["']""",
-              "versionCode": r"versionCode\s+2\b",
-              "versionName": r"""versionName\s+["']1\.0\.1["']"""
+              "versionCode": r"versionCode\s+3\b",
+              "versionName": r"""versionName\s+["']1\.0\.2["']"""
           }
 
           for name, pattern in expected.items():
@@ -724,8 +724,8 @@ jobs:
                   )
 
           print("Package: com.skylines.kag")
-          print("Version code: 2")
-          print("Version name: 1.0.1")
+          print("Version code: 3")
+          print("Version name: 1.0.2")
           print("Release configuration verified.")
           PY
 
