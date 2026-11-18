@@ -32,7 +32,7 @@ const CAR_MIN_SPEED = 1.1;
 const CAR_ACCELERATION = 2.8;
 const CAR_STEERING_SPEED = 5;
 
-const STARTING_MONEY = 5000000;
+const STARTING_MONEY = 50000000;
 const HOUR_MS = 60 * 60 * 1000;
 
 const SAVE_KEY = 'sk-skyline-city-v1';
@@ -150,6 +150,8 @@ const CATEGORIES: Record<Category, ModelOption[]> = {
   road: [
     { name: 'Straight Road', path: '/models/roads/road.glb', price: 50 },
     { name: 'Road Lamp', path: '/models/roads/road_lamp.glb', price: 50 },
+    { name: 'Clock tower', path: '/models/roads/clock_chock.glb', price: 50 }, 
+    { name: 'Stop Sign', path: '/models/roads/stop_sign.glb', price: 50 }, 
     { name: 'Traffic Sign', path: '/models/roads/road_traffic_sign.glb', price: 50 }
   ],
   building: [
@@ -176,6 +178,7 @@ const CATEGORIES: Record<Category, ModelOption[]> = {
     { name: 'Gas Station 2', path: '/models/gov/gas_station2.glb', price: 250000 },
     { name: 'Giant Office', path: '/models/gov/giant_office_building.glb', price: 10000000 },
     { name: 'Gov Office', path: '/models/gov/gov_office1.glb', price: 500000 },
+    { name: 'University', path: '/models/gov/university.glb', price: 300000 },
     { name: 'Mini Office', path: '/models/gov/mini_office.glb', price: 100000 },
     { name: 'Old Office', path: '/models/gov/old_office_building.glb', price: 250000 },
     { name: 'Police Station 1', path: '/models/gov/police_station1.glb', price: 1000000 },
