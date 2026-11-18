@@ -256,9 +256,8 @@ function worldPosition(x: number, z: number) {
 }
 
 function getFootprint(category: Category, modelPath = '') {
-  // Grid cells are now half the previous world size. These footprints keep
-  // ordinary buildings at their former world dimensions while allowing roads
-  // and small props to occupy smaller, independently placeable cells.
+  // Every footprint is an integer number of complete grid cells.
+  // Rotating swaps width/depth; no fractional-cell placement is permitted.
   if (modelPath === '/models/market/runway.glb') return { width: 6, depth: 2 };
   if (category === 'road') return { width: 1, depth: 1 };
   if (modelPath.includes('shopping_center2')) return { width: 8, depth: 8 };
@@ -557,7 +556,8 @@ function prepareModel(
   template: THREE.Object3D,
   width: number,
   depth: number,
-  maxHeight = 30
+  maxHeight = 30,
+  fillFootprint = false
 ): THREE.Group {
   const root = new THREE.Group();
   const model = template.clone(true);
@@ -568,16 +568,25 @@ function prepareModel(
   const size = bounds.getSize(new THREE.Vector3());
   const center = bounds.getCenter(new THREE.Vector3());
 
-  const scale = Math.min(
-    width / Math.max(size.x, 0.01),
-    depth / Math.max(size.z, 0.01),
-    maxHeight / Math.max(size.y, 0.01)
-  );
+  const scaleX = width / Math.max(size.x, 0.01);
+  const scaleZ = depth / Math.max(size.z, 0.01);
+  const scaleY = fillFootprint
+    ? Math.min(scaleX, scaleZ, maxHeight / Math.max(size.y, 0.01))
+    : Math.min(scaleX, scaleZ, maxHeight / Math.max(size.y, 0.01));
 
-  model.scale.multiplyScalar(scale);
-  model.position.x -= center.x * scale;
-  model.position.z -= center.z * scale;
-  model.position.y -= bounds.min.y * scale;
+  if (fillFootprint) {
+    // Building/prop meshes fill their complete rectangular grid footprint.
+    // The occupancy map and rendered footprint therefore have matching edges.
+    model.scale.set(scaleX, scaleY, scaleZ);
+    model.position.x -= center.x * scaleX;
+    model.position.z -= center.z * scaleZ;
+    model.position.y -= bounds.min.y * scaleY;
+  } else {
+    model.scale.multiplyScalar(scaleY);
+    model.position.x -= center.x * scaleY;
+    model.position.z -= center.z * scaleY;
+    model.position.y -= bounds.min.y * scaleY;
+  }
 
   model.traverse((object) => {
     if (object instanceof THREE.Mesh) {
@@ -737,6 +746,47 @@ function getRunwayGroups(grid: Record<string, GridItem>): THREE.Group[] {
   return result;
 }
 
+function createGrassTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 512;
+  const context = canvas.getContext('2d');
+  if (!context) {
+    const fallback = new THREE.CanvasTexture(canvas);
+    fallback.colorSpace = THREE.SRGBColorSpace;
+    return fallback;
+  }
+
+  context.fillStyle = '#4f963f';
+  context.fillRect(0, 0, 512, 512);
+
+  // Fine, low-contrast blades and flecks create a continuous grass surface
+  // without drawing a visible tile/grid pattern over the playable map.
+  for (let i = 0; i < 24000; i++) {
+    const x = Math.random() * 512;
+    const y = Math.random() * 512;
+    const shade = Math.random();
+    context.strokeStyle = shade > 0.55
+      ? 'rgba(174,205,105,0.22)'
+      : shade > 0.25
+        ? 'rgba(28,91,35,0.20)'
+        : 'rgba(218,220,133,0.12)';
+    context.lineWidth = 0.5 + Math.random() * 0.8;
+    context.beginPath();
+    context.moveTo(x, y);
+    context.lineTo(x + (Math.random() - 0.5) * 2.5, y - 1 - Math.random() * 3.5);
+    context.stroke();
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(18, 18);
+  texture.anisotropy = 4;
+  return texture;
+}
+
 // ======================================================
 // MAIN COMPONENT
 // ======================================================
@@ -852,41 +902,25 @@ export default function GameCanvas() {
   // ======================================================
 
   const addEnvironment = (scene: THREE.Scene) => {
-    const terrain = new THREE.Mesh(
-      new THREE.PlaneGeometry(WORLD_SIZE * 2, WORLD_SIZE * 2),
-      new THREE.MeshStandardMaterial({ color: 0x4f8f45, roughness: 1 })
-    );
-
-    terrain.rotation.x = -Math.PI / 2;
-    terrain.position.y = -0.12;
-    terrain.receiveShadow = true;
-    scene.add(terrain);
-
+    const grassTexture = createGrassTexture();
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE),
-      new THREE.MeshStandardMaterial({ color: 0x70b957, roughness: 1 })
+      new THREE.MeshStandardMaterial({
+        map: grassTexture,
+        color: 0xffffff,
+        roughness: 1,
+        metalness: 0
+      })
     );
 
     ground.rotation.x = -Math.PI / 2;
-    ground.position.y = -0.02;
+    ground.position.y = -0.025;
     ground.receiveShadow = true;
     ground.userData.isGround = true;
     scene.add(ground);
 
-    const grid = new THREE.GridHelper(
-      WORLD_SIZE,
-      GRID_SIZE,
-      0x9fca88,
-      0x4c8c43
-    );
-
-    grid.position.y = 0.015;
-    (grid.material as THREE.Material).transparent = true;
-    (grid.material as THREE.Material).opacity = 0.28;
-    scene.add(grid);
-
-    // Trees intentionally removed: the entire buildable map is open grass.
-
+    // No GridHelper is added: the map is a seamless grass field.
+    // Trees are intentionally omitted from the entire map.
   };
 
   // ======================================================
@@ -1299,6 +1333,12 @@ export default function GameCanvas() {
     depth: number
   ) => {
     if (
+      !Number.isInteger(x) ||
+      !Number.isInteger(z) ||
+      !Number.isInteger(width) ||
+      !Number.isInteger(depth) ||
+      width < 1 ||
+      depth < 1 ||
       x < 0 ||
       z < 0 ||
       x + width > GRID_SIZE ||
@@ -1488,9 +1528,10 @@ export default function GameCanvas() {
       group.add(
         prepareModel(
           template,
-          width * TILE_SIZE * (model.path === '/models/market/runway.glb' ? 1 : 0.96),
-          depth * TILE_SIZE * (model.path === '/models/market/runway.glb' ? 1 : 0.96),
-          maxHeight
+          width * TILE_SIZE,
+          depth * TILE_SIZE,
+          maxHeight,
+          true
         )
       );
     }
@@ -2060,9 +2101,10 @@ export default function GameCanvas() {
               group.add(
                 prepareModel(
                   template,
-                  saved.width * TILE_SIZE * (saved.modelPath === '/models/market/runway.glb' ? 1 : 0.96),
-                  saved.depth * TILE_SIZE * (saved.modelPath === '/models/market/runway.glb' ? 1 : 0.96),
-                  maxHeight
+                  saved.width * TILE_SIZE,
+                  saved.depth * TILE_SIZE,
+                  maxHeight,
+                  true
                 )
               );
             }
@@ -2971,145 +3013,98 @@ export default function GameCanvas() {
         </div>
       )}
 
-      {/* SELECTED BUILDING PANEL */}
+      {/* SELECTED BUILDING PANEL: scrollable details, always-visible controls */}
       {selectedBuilding && !moveMode && (
-        <div className="ui-panel absolute right-3 top-16 z-30 max-h-[68vh] w-56 max-w-[72vw] overflow-hidden rounded-lg border border-white/20 bg-slate-950/95 p-2 shadow-2xl backdrop-blur-xl">
-          <div className="mb-1.5 flex items-center justify-between">
-            <h2 className="text-xs font-bold">
+        <div className="ui-panel absolute right-2 top-14 z-30 flex max-h-[calc(100dvh-4.5rem)] w-[min(260px,44vw)] flex-col overflow-hidden rounded-lg border border-white/20 bg-slate-950/95 p-2 shadow-2xl backdrop-blur-xl sm:right-3 sm:w-64">
+          <div className="mb-1 flex shrink-0 items-center justify-between gap-2 border-b border-white/10 pb-1.5">
+            <h2 className="truncate text-[11px] font-bold">
               {CATEGORY_NAMES[selectedBuilding.category]}
             </h2>
-
             <button
               onClick={() => setSelectedBuilding(null)}
-              className="rounded-lg bg-white/10 px-2 py-1 text-xs"
-            >
-              ✕
-            </button>
+              aria-label="Close building menu"
+              className="shrink-0 rounded-md bg-white/10 px-2 py-1 text-xs"
+            >✕</button>
           </div>
 
-          {/* HOME */}
-          {selectedBuilding.category === 'building' && (
-            <>
-              <div className="mb-3 flex justify-between text-xs">
-                <span className="text-slate-400">Home Level</span>
-                <span className="font-bold text-yellow-400">
-                  {selectedBuilding.level}/7
-                </span>
-              </div>
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain pr-0.5">
+            {selectedBuilding.category === 'building' && (
+              <section className="rounded-md bg-white/5 p-1.5">
+                <div className="flex justify-between text-[10px]">
+                  <span className="text-slate-400">Home level</span>
+                  <span className="font-bold text-yellow-400">{selectedBuilding.level}/7</span>
+                </div>
+                <div className="my-1.5 h-1.5 overflow-hidden rounded-full bg-slate-700">
+                  <div className="h-full rounded-full bg-gradient-to-r from-blue-500 to-green-400" style={{ width: `${selectedBuilding.level / 7 * 100}%` }} />
+                </div>
+                <button
+                  onClick={handleUpgrade}
+                  disabled={selectedBuilding.level >= 7 || money < BUILDING_UPGRADE_PRICES[selectedBuilding.level]}
+                  className="w-full rounded-md bg-blue-600 px-2 py-1.5 text-[9px] font-bold disabled:opacity-40"
+                >
+                  {selectedBuilding.level >= 7 ? 'MAX LEVEL' : `UPGRADE · ${formatMoney(BUILDING_UPGRADE_PRICES[selectedBuilding.level])}`}
+                </button>
+                <p className="mt-1 text-center text-[9px] text-green-400">+20 population per upgrade</p>
+              </section>
+            )}
 
-              <div className="mb-3 h-2 overflow-hidden rounded-full bg-slate-700">
-                <div
-                  className="h-full rounded-full bg-gradient-to-r from-blue-500 to-green-400"
-                  style={{ width: `${selectedBuilding.level / 7 * 100}%` }}
-                />
-              </div>
+            {selectedBills && (
+              <section className="rounded-md border border-amber-500/30 bg-amber-950/25 p-1.5">
+                <div className="mb-1 flex items-center justify-between">
+                  <span className="text-[9px] font-bold uppercase text-amber-300">Hourly bills</span>
+                  {rentIsDue && <span className="text-[9px] font-bold text-red-400">PAYMENT DUE</span>}
+                </div>
+                <div className="space-y-0.5 text-[9px]">
+                  <div className="flex justify-between"><span className="text-slate-300">Rent</span><span>{formatMoney(selectedBills.rent)}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-300">Gas</span><span>{formatMoney(selectedBills.gas)}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-300">Electricity</span><span>{formatMoney(selectedBills.electricity)}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-300">Water</span><span>{formatMoney(selectedBills.water)}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-300">Maintenance</span><span>{formatMoney(selectedBills.maintenance)}</span></div>
+                  <div className="mt-1 flex justify-between border-t border-white/15 pt-1 font-bold"><span>Total / hour</span><span className="text-amber-300">{formatMoney(selectedBills.total)}</span></div>
+                </div>
+                <button
+                  onClick={paySelectedHomeRent}
+                  disabled={!rentIsDue || money < selectedBills.total}
+                  className="mt-1.5 w-full rounded-md bg-amber-600 py-1.5 text-[9px] font-bold disabled:opacity-40"
+                >
+                  {rentIsDue ? `PAY ALL · ${formatMoney(selectedBills.total)}` : 'BILLS NOT DUE'}
+                </button>
+              </section>
+            )}
 
-              <button
-                onClick={handleUpgrade}
-                disabled={
-                  selectedBuilding.level >= 7 ||
-                  money < BUILDING_UPGRADE_PRICES[selectedBuilding.level]
-                }
-                className="w-full rounded-lg bg-blue-600 py-1.5 text-[10px] font-bold hover:bg-blue-500 disabled:opacity-40"
-              >
-                {selectedBuilding.level >= 7
-                  ? 'MAX LEVEL'
-                  : `⬆ UPGRADE · ${formatMoney(BUILDING_UPGRADE_PRICES[selectedBuilding.level])}`}
-              </button>
-
-              <p className="mt-2 text-center text-[10px] text-green-400">
-                +20 population per upgrade
-              </p>
-            </>
-          )}
-
-          {/* HOURLY BUILDING BILLS */}
-          {selectedBills && (
-            <div className="mb-2 rounded-md border border-amber-500/30 bg-amber-950/25 p-1.5">
-              <p className="mb-2 text-[9px] font-bold uppercase tracking-wide text-amber-300">Hourly building bills</p>
-              <div className="space-y-0.5 text-[9px]">
-                <div className="flex justify-between"><span className="text-slate-300">Rent</span><span>{formatMoney(selectedBills.rent)}</span></div>
-                <div className="flex justify-between"><span className="text-slate-300">Gas bill</span><span>{formatMoney(selectedBills.gas)}</span></div>
-                <div className="flex justify-between"><span className="text-slate-300">Electricity bill</span><span>{formatMoney(selectedBills.electricity)}</span></div>
-                <div className="flex justify-between"><span className="text-slate-300">Water bill</span><span>{formatMoney(selectedBills.water)}</span></div>
-                <div className="flex justify-between"><span className="text-slate-300">Maintenance</span><span>{formatMoney(selectedBills.maintenance)}</span></div>
-                <div className="mt-2 flex justify-between border-t border-white/15 pt-2 text-xs font-bold"><span>Total per hour</span><span className="text-amber-300">{formatMoney(selectedBills.total)}</span></div>
-              </div>
-              <button
-                onClick={paySelectedHomeRent}
-                disabled={!rentIsDue || money < selectedBills.total}
-                className="mt-3 w-full rounded-lg bg-amber-600 py-2 text-[10px] font-bold hover:bg-amber-500 disabled:opacity-40"
-              >
-                {rentIsDue ? `PAY ALL BILLS · ${formatMoney(selectedBills.total)}` : 'BILLS NOT DUE YET'}
-              </button>
-            </div>
-          )}
-
-          {/* SHOP, GOVERNMENT AND MARKET INCOME */}
-          {(selectedBuilding.category === 'shop' ||
-            selectedBuilding.category === 'gov' ||
-            selectedBuilding.category === 'market') && (
-            <div className="mb-2 rounded-md border border-green-500/30 bg-green-950/30 p-1.5">
-              <p className="text-[10px] font-bold uppercase text-green-300">
-                Building income
-              </p>
-
-              <p className="mt-1 text-lg font-bold text-green-400">
-                {formatMoney(selectedHourlyIncome)} / hour
-              </p>
-
-              <p className="mt-1 text-xs text-slate-300">
-                Ready to collect: {formatMoney(selectedIncomeReady)}
-              </p>
-
-              <button
-                onClick={collectSelectedIncome}
-                disabled={selectedIncomeReady <= 0}
-                className="mt-3 w-full rounded-lg bg-green-600 py-1.5 text-[10px] font-bold hover:bg-green-500 disabled:opacity-40"
-              >
-                {selectedIncomeReady > 0
-                  ? `COLLECT ${formatMoney(selectedIncomeReady)}`
-                  : 'WAIT FOR ONE HOUR'}
-              </button>
-
-              <p className="mt-2 text-[9px] text-slate-400">
-                Income is not added automatically. Select this building to collect it.
-              </p>
-            </div>
-          )}
-
-          <button
-            onClick={rotateSelectedBuilding}
-            className="mb-2 w-full rounded-lg bg-purple-700 py-1.5 text-[10px] font-bold hover:bg-purple-600"
-          >
-            ↻ ROTATE 90°
-          </button>
-
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              onClick={startMoving}
-              className="rounded-lg bg-amber-600 py-2 text-xs font-bold hover:bg-amber-500"
-            >
-              ↔ MOVE
-            </button>
-
-            <button
-              onClick={removeSelected}
-              className="rounded-lg bg-red-700 py-2 text-xs font-bold hover:bg-red-600"
-            >
-              ✕ REMOVE
-            </button>
+            {(selectedBuilding.category === 'shop' || selectedBuilding.category === 'gov' || selectedBuilding.category === 'market') && (
+              <section className="rounded-md border border-green-500/30 bg-green-950/30 p-1.5">
+                <p className="text-[9px] font-bold uppercase text-green-300">Building income</p>
+                <p className="text-sm font-bold text-green-400">{formatMoney(selectedHourlyIncome)} / hour</p>
+                <p className="text-[9px] text-slate-300">Ready: {formatMoney(selectedIncomeReady)}</p>
+                <button
+                  onClick={collectSelectedIncome}
+                  disabled={selectedIncomeReady <= 0}
+                  className="mt-1.5 w-full rounded-md bg-green-600 py-1.5 text-[9px] font-bold disabled:opacity-40"
+                >
+                  {selectedIncomeReady > 0 ? `COLLECT ${formatMoney(selectedIncomeReady)}` : 'WAIT FOR INCOME'}
+                </button>
+              </section>
+            )}
           </div>
 
-          <p className="mt-2 text-center text-[9px] text-slate-400">
-            Removing an item refunds 50% of its original construction price.
-          </p>
+          <div className="mt-2 shrink-0 border-t border-white/15 pt-2">
+            <button
+              onClick={rotateSelectedBuilding}
+              className="mb-1.5 w-full rounded-md bg-purple-700 py-1.5 text-[9px] font-bold hover:bg-purple-600"
+            >↻ ROTATE 90°</button>
+            <div className="grid grid-cols-2 gap-1.5">
+              <button onClick={startMoving} className="rounded-md bg-amber-600 py-2 text-[10px] font-bold hover:bg-amber-500">↔ MOVE</button>
+              <button onClick={removeSelected} className="rounded-md bg-red-700 py-2 text-[10px] font-bold hover:bg-red-600">✕ REMOVE</button>
+            </div>
+            <p className="mt-1 text-center text-[8px] leading-tight text-slate-400">Remove refunds 50% of construction cost.</p>
+          </div>
         </div>
       )}
 
       {/* SELECTED TOOL */}
-      <div className="ui-panel absolute bottom-3 left-3 z-20 max-w-[70vw] rounded-xl border border-white/15 bg-slate-950/90 px-3 py-2 backdrop-blur-xl">
-        <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">
+      <div className="ui-panel absolute bottom-2 left-2 z-20 max-w-[42vw] rounded-lg border border-white/15 bg-slate-950/90 px-2 py-1.5 backdrop-blur-xl">
+        <p className="text-[8px] font-bold uppercase tracking-wider text-slate-400">
           Selected Tool
         </p>
 
