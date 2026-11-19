@@ -249,6 +249,34 @@ const CATEGORY_NAMES: Record<Category, string> = {
   market: 'Market'
 };
 
+// Return the exact catalogue item name for the selected placed model.
+// Homes use their current upgrade level because their GLB path changes on upgrade.
+function getPlacedItemName(
+  category: Category,
+  modelPath: string,
+  level: number
+): string {
+  if (category === 'building') {
+    return `Home Level ${Math.max(1, Math.min(7, Math.floor(level || 1)))}`;
+  }
+
+  const catalogueItem = CATEGORIES[category]?.find(
+    (item) => item.path === modelPath
+  );
+
+  if (catalogueItem) return catalogueItem.name;
+
+  // Friendly fallback for older saved items whose model path is not in the catalogue.
+  const fileName = modelPath.split('/').pop()?.replace(/\.glb$/i, '') || '';
+  if (fileName) {
+    return fileName
+      .replace(/[_-]+/g, ' ')
+      .replace(/\b\w/g, (letter) => letter.toUpperCase());
+  }
+
+  return CATEGORY_NAMES[category];
+}
+
 const POPULATION_VALUES: Record<Category, number> = {
   road: 0,
   building: 15,
@@ -3137,9 +3165,18 @@ export default function GameCanvas() {
       {selectedBuilding && !moveMode && (
         <div className="ui-panel absolute right-2 top-14 z-30 flex max-h-[calc(100dvh-4.5rem)] w-[min(260px,44vw)] flex-col overflow-hidden rounded-lg border border-white/20 bg-slate-950/95 p-2 shadow-2xl backdrop-blur-xl sm:right-3 sm:w-64">
           <div className="mb-1 flex shrink-0 items-center justify-between gap-2 border-b border-white/10 pb-1.5">
-            <h2 className="truncate text-[11px] font-bold">
-              {CATEGORY_NAMES[selectedBuilding.category]}
-            </h2>
+            <div className="min-w-0">
+              <h2 className="truncate text-[11px] font-bold">
+                {getPlacedItemName(
+                  selectedBuilding.category,
+                  String(selectedGroup?.userData.modelPath || ''),
+                  selectedBuilding.level
+                )}
+              </h2>
+              <p className="text-[8px] leading-tight text-slate-400">
+                {CATEGORY_NAMES[selectedBuilding.category]} item
+              </p>
+            </div>
             <button
               onClick={() => setSelectedBuilding(null)}
               aria-label="Close building menu"
