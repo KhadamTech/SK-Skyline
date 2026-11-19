@@ -635,9 +635,13 @@ function prepareLevelBuildingModel(
   const size = bounds.getSize(new THREE.Vector3());
   const center = bounds.getCenter(new THREE.Vector3());
 
-  const scaleX = width / Math.max(size.x, 0.01);
-  const scaleY = targetHeight / Math.max(size.y, 0.01);
-  const scaleZ = depth / Math.max(size.z, 0.01);
+  // Keep the upgraded model at 85% of the available fitted size.
+  // This leaves a little breathing room around the model while avoiding the
+  // overly tiny appearance caused by aggressive model normalization.
+  const BUILDING_MODEL_SIZE_FACTOR = 0.85;
+  const scaleX = (width * BUILDING_MODEL_SIZE_FACTOR) / Math.max(size.x, 0.01);
+  const scaleY = (targetHeight * BUILDING_MODEL_SIZE_FACTOR) / Math.max(size.y, 0.01);
+  const scaleZ = (depth * BUILDING_MODEL_SIZE_FACTOR) / Math.max(size.z, 0.01);
 
   model.scale.set(scaleX, scaleY, scaleZ);
   model.position.x -= center.x * scaleX;
@@ -724,6 +728,7 @@ function createStatusIcon(symbol: string, color: string): THREE.Sprite {
     map: texture, transparent: true, depthTest: false
   }));
   sprite.scale.set(1.05, 1.05, 1);
+  sprite.userData.isStatusIcon = true;
   sprite.renderOrder = 20;
   return sprite;
 }
@@ -772,6 +777,7 @@ function createRentDueIcon(): THREE.Sprite {
   texture.colorSpace = THREE.SRGBColorSpace;
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false }));
   sprite.scale.set(1.05, 1.25, 1);
+  sprite.userData.isStatusIcon = true;
   sprite.position.set(0, 5.25, 0);
   sprite.renderOrder = 21;
   sprite.visible = false;
@@ -784,6 +790,35 @@ function updateRentDueIcon(group: THREE.Group, now: number) {
   const lastPaid = Number(group.userData.lastRentPaidAt || now);
   sprite.visible = now - lastPaid >= HOUR_MS;
   group.userData.rentDue = sprite.visible;
+}
+
+/** Position floating status icons just above the current model roof.
+ * Re-run after a home upgrade because every level can have a different height.
+ */
+function positionBuildingStatusIcons(group: THREE.Group) {
+  group.updateMatrixWorld(true);
+
+  const modelChildren = group.children.filter(
+    (child) => !child.userData.isStatusIcon
+  );
+  if (modelChildren.length === 0) return;
+
+  const bounds = new THREE.Box3();
+  modelChildren.forEach((child) => {
+    child.updateMatrixWorld(true);
+    bounds.union(new THREE.Box3().setFromObject(child));
+  });
+
+  if (bounds.isEmpty()) return;
+
+  const groupWorldPosition = group.getWorldPosition(new THREE.Vector3());
+  const roofHeight = Math.max(0, bounds.max.y - groupWorldPosition.y);
+  const rentSprite = group.userData.rentDueSprite as THREE.Sprite | undefined;
+  const incomeSprite = group.userData.incomeSprite as THREE.Sprite | undefined;
+  const iconY = roofHeight + 1.15;
+
+  if (rentSprite) rentSprite.position.set(0, iconY, 0);
+  if (incomeSprite) incomeSprite.position.set(0, iconY + 0.15, 0);
 }
 
 // ======================================================
@@ -1632,6 +1667,7 @@ export default function GameCanvas() {
       updateIncomeLabel(group, Date.now());
     }
 
+    positionBuildingStatusIcons(group);
     scene.add(group);
 
     addToGrid(
@@ -2004,6 +2040,7 @@ export default function GameCanvas() {
 
     group.userData.level = nextLevel;
     group.userData.modelPath = nextPath;
+    positionBuildingStatusIcons(group);
     group.userData.width = reservedWidth / TILE_SIZE;
     group.userData.depth = reservedDepth / TILE_SIZE;
     group.userData.constructionCost =
@@ -2229,6 +2266,7 @@ export default function GameCanvas() {
               updateIncomeLabel(group, Date.now());
             }
 
+            positionBuildingStatusIcons(group);
             scene.add(group);
 
             addToGrid(
