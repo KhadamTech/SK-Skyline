@@ -32,7 +32,7 @@ const CAR_MIN_SPEED = 1.1;
 const CAR_ACCELERATION = 2.8;
 const CAR_STEERING_SPEED = 5;
 
-const STARTING_MONEY = 500000000;
+const STARTING_MONEY = 5000000;
 const HOUR_MS = 60 * 60 * 1000;
 
 const SAVE_KEY = 'sk-skyline-city-v1';
@@ -663,13 +663,13 @@ function prepareLevelBuildingModel(
   const size = bounds.getSize(new THREE.Vector3());
   const center = bounds.getCenter(new THREE.Vector3());
 
-  // Keep the upgraded model at 85% of the available fitted size.
-  // This leaves a little breathing room around the model while avoiding the
-  // overly tiny appearance caused by aggressive model normalization.
-  const BUILDING_MODEL_SIZE_FACTOR = 0.85;
-  const scaleX = (width * BUILDING_MODEL_SIZE_FACTOR) / Math.max(size.x, 0.01);
-  const scaleY = (targetHeight * BUILDING_MODEL_SIZE_FACTOR) / Math.max(size.y, 0.01);
-  const scaleZ = (depth * BUILDING_MODEL_SIZE_FACTOR) / Math.max(size.z, 0.01);
+  // Keep the building footprint slightly inset. Set height to 50% of the
+  // level target so buildings are less tall while retaining clear upgrade growth.
+  const BUILDING_FOOTPRINT_SIZE_FACTOR = 0.85;
+  const BUILDING_HEIGHT_SIZE_FACTOR = 0.50;
+  const scaleX = (width * BUILDING_FOOTPRINT_SIZE_FACTOR) / Math.max(size.x, 0.01);
+  const scaleY = (targetHeight * BUILDING_HEIGHT_SIZE_FACTOR) / Math.max(size.y, 0.01);
+  const scaleZ = (depth * BUILDING_FOOTPRINT_SIZE_FACTOR) / Math.max(size.z, 0.01);
 
   model.scale.set(scaleX, scaleY, scaleZ);
   model.position.x -= center.x * scaleX;
