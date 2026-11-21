@@ -290,7 +290,13 @@ function gridKey(x: number, z: number): string {
 }
 
 function formatMoney(value: number): string {
-  return `$${Math.floor(value).toLocaleString()}`;
+  const amount = Math.floor(Number.isFinite(value) ? value : 0);
+  const sign = amount < 0 ? '-' : '';
+  const absolute = Math.abs(amount);
+  if (absolute >= 1_000_000_000) return `${sign}$${(absolute / 1_000_000_000).toFixed(absolute % 1_000_000_000 === 0 ? 0 : 1).replace(/\.0$/, '')}B`;
+  if (absolute >= 1_000_000) return `${sign}$${(absolute / 1_000_000).toFixed(absolute % 1_000_000 === 0 ? 0 : 1).replace(/\.0$/, '')}M`;
+  if (absolute >= 1_000) return `${sign}$${(absolute / 1_000).toFixed(absolute % 1_000 === 0 ? 0 : 1).replace(/\.0$/, '')}k`;
+  return `${sign}$${absolute.toLocaleString()}`;
 }
 
 function worldPosition(x: number, z: number) {
@@ -876,7 +882,7 @@ function createGrassTexture(): THREE.CanvasTexture {
     return fallback;
   }
 
-  context.fillStyle = '#4f963f';
+  context.fillStyle = '#32a82f';
   context.fillRect(0, 0, 512, 512);
 
   // Fine, low-contrast blades and flecks create a continuous grass surface
@@ -886,10 +892,10 @@ function createGrassTexture(): THREE.CanvasTexture {
     const y = Math.random() * 512;
     const shade = Math.random();
     context.strokeStyle = shade > 0.55
-      ? 'rgba(174,205,105,0.22)'
+      ? 'rgba(151,220,91,0.24)'
       : shade > 0.25
-        ? 'rgba(28,91,35,0.20)'
-        : 'rgba(218,220,133,0.12)';
+        ? 'rgba(16,102,28,0.18)'
+        : 'rgba(190,235,112,0.10)';
     context.lineWidth = 0.5 + Math.random() * 0.8;
     context.beginPath();
     context.moveTo(x, y);
@@ -956,6 +962,13 @@ export default function GameCanvas() {
   populationRef.current = population;
   rotationRef.current = rotation;
   moveModeRef.current = moveMode;
+
+  // Game action notifications disappear automatically after 2.5 seconds.
+  useEffect(() => {
+    if (!message) return;
+    const timeout = window.setTimeout(() => setMessage(''), 2500);
+    return () => window.clearTimeout(timeout);
+  }, [message]);
 
   const changeMoney = (amount: number) => {
     const safeAmount = Math.max(0, Math.floor(amount));
@@ -1038,8 +1051,83 @@ export default function GameCanvas() {
     ground.userData.isGround = true;
     scene.add(ground);
 
-    // No GridHelper is added: the map is a seamless grass field.
-    // Trees are intentionally omitted from the entire map.
+    // Decorative countryside beyond the playable city boundary. The outer
+    // terrain is separate from the 80x80 buildable map, so these props never
+    // occupy grid cells or interfere with placement and traffic.
+    const outerGround = new THREE.Mesh(
+      new THREE.PlaneGeometry(WORLD_SIZE * 2.7, WORLD_SIZE * 2.7),
+      new THREE.MeshStandardMaterial({ color: 0x397b35, roughness: 1, metalness: 0 })
+    );
+    outerGround.rotation.x = -Math.PI / 2;
+    outerGround.position.y = -0.09;
+    outerGround.receiveShadow = true;
+    scene.add(outerGround);
+
+    const treeTrunkMaterial = new THREE.MeshStandardMaterial({ color: 0x684329, roughness: 1 });
+    const treeLeafMaterials = [
+      new THREE.MeshStandardMaterial({ color: 0x176b2c, roughness: 1 }),
+      new THREE.MeshStandardMaterial({ color: 0x238b32, roughness: 1 }),
+      new THREE.MeshStandardMaterial({ color: 0x329d3c, roughness: 1 })
+    ];
+    const mountainMaterials = [
+      new THREE.MeshStandardMaterial({ color: 0x526b50, roughness: 1 }),
+      new THREE.MeshStandardMaterial({ color: 0x657d5a, roughness: 1 }),
+      new THREE.MeshStandardMaterial({ color: 0x788c68, roughness: 1 })
+    ];
+
+    const addPine = (x: number, z: number, scale: number) => {
+      const tree = new THREE.Group();
+      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.22 * scale, 0.32 * scale, 2.1 * scale, 6), treeTrunkMaterial);
+      trunk.position.y = 1.05 * scale;
+      trunk.castShadow = true;
+      tree.add(trunk);
+      for (let tier = 0; tier < 3; tier++) {
+        const height = (2.6 - tier * 0.22) * scale;
+        const foliage = new THREE.Mesh(
+          new THREE.ConeGeometry((1.65 - tier * 0.25) * scale, height, 7),
+          treeLeafMaterials[(tier + Math.floor((x + z) * 0.01)) % treeLeafMaterials.length]
+        );
+        foliage.position.y = (2.1 + tier * 1.25) * scale;
+        foliage.castShadow = true;
+        tree.add(foliage);
+      }
+      tree.position.set(x, 0, z);
+      scene.add(tree);
+    };
+
+    // Four loose tree belts outside the map, leaving a clear visual horizon.
+    for (let i = 0; i < 22; i++) {
+      const t = i / 21;
+      const offset = -HALF_WORLD - 17 - (i % 3) * 5;
+      const along = -HALF_WORLD + t * WORLD_SIZE;
+      addPine(along, offset, 0.85 + (i % 4) * 0.12);
+      addPine(along, -offset, 0.9 + (i % 3) * 0.15);
+      addPine(offset, along, 0.85 + (i % 5) * 0.1);
+      addPine(-offset, along, 0.9 + (i % 4) * 0.12);
+    }
+
+    // Distant low-poly mountain range beyond the tree line.
+    const mountainPositions = [
+      [-150, -155, 28, 48], [-95, -172, 36, 58], [-35, -165, 25, 43],
+      [35, -172, 34, 55], [100, -158, 29, 48], [158, -125, 34, 57],
+      [165, -55, 27, 46], [168, 25, 35, 58], [155, 100, 30, 50],
+      [105, 165, 34, 56], [35, 172, 26, 45], [-40, 170, 36, 58],
+      [-115, 158, 30, 51], [-168, 100, 34, 55], [-172, 20, 27, 46], [-165, -65, 32, 52]
+    ];
+    mountainPositions.forEach(([x, z, radius, height], index) => {
+      const mountain = new THREE.Mesh(
+        new THREE.ConeGeometry(radius, height, 7),
+        mountainMaterials[index % mountainMaterials.length]
+      );
+      mountain.position.set(x, height / 2 - 0.1, z);
+      mountain.rotation.y = index * 0.37;
+      mountain.castShadow = true;
+      mountain.receiveShadow = true;
+      scene.add(mountain);
+    });
+
+    // The playable map itself remains a seamless, brighter green grass field.
+    // No grid lines or trees are placed inside the buildable boundary.
   };
 
   // ======================================================
@@ -3109,14 +3197,16 @@ export default function GameCanvas() {
         </button>
       </div>
 
-      {/* CATEGORY MENU */}
+      {/* CATEGORY ITEMS: one compact horizontal, scrollable strip at the bottom */}
       {menuOpen && !moveMode && (
-        <div className="ui-panel absolute left-1/2 top-11 z-20 w-[94vw] max-w-3xl -translate-x-1/2 rounded-xl border border-white/20 bg-slate-950/95 p-2 shadow-2xl backdrop-blur-xl">
-          <div className="mb-2 text-center text-[10px] font-bold uppercase tracking-widest text-slate-400">
-            {CATEGORY_NAMES[activeCategory]} Items
+        <div className="ui-panel absolute bottom-2 left-1/2 z-30 w-[96vw] max-w-5xl -translate-x-1/2 rounded-xl border border-white/20 bg-slate-950/95 px-2 py-1.5 shadow-2xl backdrop-blur-xl">
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <span className="truncate text-[9px] font-bold uppercase tracking-wider text-slate-400">
+              {CATEGORY_NAMES[activeCategory]} · {CATEGORIES[activeCategory].length} items
+            </span>
+            <span className="shrink-0 text-[8px] text-slate-500">Swipe to see all</span>
           </div>
-
-          <div className="flex max-h-[22vh] flex-wrap justify-center gap-1.5 overflow-y-auto">
+          <div className="flex w-full flex-nowrap items-stretch gap-1.5 overflow-x-auto overflow-y-hidden pb-1 [scrollbar-width:thin]">
             {CATEGORIES[activeCategory].map((model) => (
               <button
                 key={model.path}
@@ -3127,17 +3217,12 @@ export default function GameCanvas() {
                   setMenuOpen(false);
                   rotationRef.current = 0;
                   setRotation(0);
-
-                  setMessage(
-                    `${model.name} selected. Price: ${formatMoney(model.price)}. Tap empty land to build.`
-                  );
+                  setMessage(`${model.name} selected. Price: ${formatMoney(model.price)}. Tap empty land to build.`);
                 }}
-                className="rounded-md border border-slate-600 bg-slate-800 px-2 py-1.5 text-[10px] font-semibold text-slate-200 hover:bg-slate-700"
+                className="flex min-w-[88px] max-w-[118px] shrink-0 flex-col justify-center rounded-md border border-slate-600 bg-slate-800 px-2 py-1.5 text-left text-[9px] font-semibold leading-tight text-slate-200 hover:bg-slate-700"
               >
-                <span className="block">{model.name}</span>
-                <span className="mt-1 block text-[10px] font-bold text-green-400">
-                  {formatMoney(model.price)}
-                </span>
+                <span className="line-clamp-2 min-h-[22px]">{model.name}</span>
+                <span className="mt-1 text-[9px] font-bold text-green-400">{formatMoney(model.price)}</span>
               </button>
             ))}
           </div>
