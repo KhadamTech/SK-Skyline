@@ -629,6 +629,9 @@ function createBuildingLotBase(width: number, depth: number): THREE.Mesh {
   base.receiveShadow = true;
   base.castShadow = false;
   base.userData.isBuildingLotBase = true;
+  // Foundation is a permanent part of the placed lot. Keep it when the
+  // residential GLB is replaced during upgrades (levels 2–7).
+  base.userData.keepOnUpgrade = true;
   return base;
 }
 
@@ -2173,6 +2176,7 @@ export default function GameCanvas() {
     oldChildren.forEach((child) => {
       if (
         child.userData.keepOnUpgrade ||
+        child.userData.isBuildingLotBase ||
         child === group.userData.rentDueSprite ||
         child === group.userData.incomeSprite
       ) {
