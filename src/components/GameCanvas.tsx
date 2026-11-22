@@ -150,6 +150,8 @@ const CATEGORIES: Record<Category, ModelOption[]> = {
   road: [
     { name: 'Straight Road', path: '/models/roads/road.glb', price: 50 },
     { name: 'Road Lamp', path: '/models/roads/road_lamp.glb', price: 50 },
+    { name: 'Stop Sign', path: '/models/roads/stop_sign.glb', price: 50 },
+    { name: 'Clock Chock', path: '/models/roads/clock_chock.glb', price: 50 },
     { name: 'Traffic Sign', path: '/models/roads/road_traffic_sign.glb', price: 50 }
   ],
   building: [
