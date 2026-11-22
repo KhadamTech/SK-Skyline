@@ -169,6 +169,10 @@ const CATEGORIES: Record<Category, ModelOption[]> = {
   market: [
     { name: 'Crypto Office', path: '/models/market/crypto_office.glb', price: 250000 },
     { name: 'Factory', path: '/models/market/factory.glb', price: 500000 },
+    { name: 'Apartment1', path: '/models/market/apartment.glb', price: 5000000 },
+    { name: 'Apartment2', path: '/models/market/apartment1.glb', price: 5000000 },
+    { name: 'Park', path: '/models/market/park.glb', price: 550000 },
+    { name: 'Residential Building', path: '/models/market/residential_building.glb', price: 8500000 },
     { name: 'Factory 1', path: '/models/market/factory1.glb', price: 750000 },
     { name: 'Power Plant', path: '/models/market/power_plant.glb', price: 1500000 },
     { name: 'Runway', path: '/models/market/runway.glb', price: 1000000 }
