@@ -606,6 +606,33 @@ function createFallbackModel(path: string): THREE.Group {
 }
 
 // ======================================================
+// BUILDING LOT BASE / FOUNDATION
+// ======================================================
+
+/**
+ * A muted concrete-gray lot base fills the small gaps between placed
+ * buildings and nearby roads. It is attached to each non-road city item,
+ * so it moves, rotates, saves and restores with that item.
+ */
+function createBuildingLotBase(width: number, depth: number): THREE.Mesh {
+  const base = new THREE.Mesh(
+    new THREE.BoxGeometry(width, 0.12, depth),
+    new THREE.MeshStandardMaterial({
+      color: 0x95a5a6,
+      roughness: 0.95,
+      metalness: 0
+    })
+  );
+
+  // The top of the base sits just above the grass and just below the model.
+  base.position.y = -0.045;
+  base.receiveShadow = true;
+  base.castShadow = false;
+  base.userData.isBuildingLotBase = true;
+  return base;
+}
+
+// ======================================================
 // MODEL NORMALIZATION
 // ======================================================
 
@@ -1732,6 +1759,12 @@ export default function GameCanvas() {
     if (isMainRoad) {
       group.add(createRoadTile());
     } else {
+      // Use the same #95a5a6 foundation for every non-road category.
+      // Its dimensions exactly match the occupied grid footprint.
+      group.add(
+        createBuildingLotBase(width * TILE_SIZE, depth * TILE_SIZE)
+      );
+
       const maxHeight =
         category === 'gov' ? 18 :
         category === 'shop' ? 7 :
@@ -2326,6 +2359,14 @@ export default function GameCanvas() {
             ) {
               group.add(createRoadTile());
             } else {
+              // Recreate the same gray lot base for previously saved items.
+              group.add(
+                createBuildingLotBase(
+                  saved.width * TILE_SIZE,
+                  saved.depth * TILE_SIZE
+                )
+              );
+
               const maxHeight =
                 saved.category === 'gov' ? 18 :
                 saved.category === 'shop' ? 7 :
