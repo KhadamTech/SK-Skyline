@@ -793,14 +793,20 @@ jobs:
 
           echo "Signed Play Store AAB verified."
           ls -lh "$AAB"
-
-      # 23. Upload APK and AAB
-      - name: Upload Release APK and AAB
+      # 23. Upload APK separately
+      - name: Upload Android APK
         uses: actions/upload-artifact@v4
         with:
-          name: SK-Skyline-Android-Release-v1.0.2
-          path: |
-            android/app/build/outputs/apk/release/app-release.apk
-            android/app/build/outputs/bundle/release/app-release.aab
+          name: SK-Skyline-APK-v1.0.2
+          path: android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      # 24. Upload AAB separately
+      - name: Upload Google Play AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: SK-Skyline-AAB-v1.0.2
+          path: android/app/build/outputs/bundle/release/app-release.aab
           if-no-files-found: error
           retention-days: 30
