@@ -162,7 +162,7 @@ const CATEGORIES: Record<Category, ModelOption[]> = {
     { name: 'Cafe shop', path: '/models/shops/cafe.glb', price: 2000 }, 
     { name: 'Gun Shop', path: '/models/shops/gun_shop.glb', price: 200000 }, 
     { name: 'Market', path: '/models/shops/market.glb', price: 100000 }, 
-    { name: 'Restaurant', path: '/models/shops/restaurant1.glb', price: 10000 }, 
+    { name: '5 Star Hotel', path: '/models/shops/restaurant1.glb', price: 10000 }, 
     { name: 'Shopping Center1', path: '/models/shops/shopping_center1.glb', price: 500000 }, 
     { name: 'Shopping Center2', path: '/models/shops/shopping_center2.glb', price: 1000000 },
   ],
