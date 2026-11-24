@@ -162,7 +162,7 @@ const CATEGORIES: Record<Category, ModelOption[]> = {
     { name: 'Cafe shop', path: '/models/shops/cafe.glb', price: 2000 }, 
     { name: 'Gun Shop', path: '/models/shops/gun_shop.glb', price: 200000 }, 
     { name: 'Market', path: '/models/shops/market.glb', price: 100000 }, 
-    { name: '5 Star Hotel', path: '/models/shops/restaurant1.glb', price: 10000 }, 
+    { name: 'Restaurant', path: '/models/shops/restaurant1.glb', price: 10000 }, 
     { name: 'Shopping Center1', path: '/models/shops/shopping_center1.glb', price: 500000 }, 
     { name: 'Shopping Center2', path: '/models/shops/shopping_center2.glb', price: 1000000 },
   ],
@@ -3022,9 +3022,8 @@ export default function GameCanvas() {
           const laneOffset = (modelIndex - 1) * 1.15;
           const start = runwayStart.clone().addScaledVector(side, laneOffset);
           plane.position.copy(start);
-          // airplane1.glb and airplane2.glb have a 90-degree model-axis
-          // difference from airplane3.glb; compensate so every nose follows
-          // the same runway heading.
+          // This is only a model-axis correction for the GLB files, not a
+          // movement difference. All aircraft follow the same runway heading.
           const orientationOffset = modelIndex < 2 ? Math.PI / 2 : 0;
           const aircraftHeading = Math.atan2(forward.x, forward.z) + orientationOffset;
           plane.rotation.y = aircraftHeading;
@@ -3041,8 +3040,9 @@ export default function GameCanvas() {
         const now = performance.now();
         airplanes.current.forEach((plane) => {
           const elapsed = Math.max(0, now - plane.phaseStartedAt);
-          const center = new THREE.Vector3(0, 0, 0);
-          const cityOrbit = center.clone().add(new THREE.Vector3(plane.modelIndex * 3 - 3, 0, 0));
+          // All three aircraft use the same flight route and movement settings.
+          // Lane offsets only keep them separated on the runway.
+          const cityOrbit = new THREE.Vector3(0, 0, 0);
           if (plane.phase === 'parked' && now >= plane.phaseStartedAt) {
             plane.phase = 'taxi'; plane.phaseStartedAt = now;
           } else if (plane.phase === 'taxi') {
@@ -3064,7 +3064,8 @@ export default function GameCanvas() {
             plane.mesh.position.copy(target);
             if (t >= 1) { plane.phase = 'holding'; plane.phaseStartedAt = now; }
           } else if (plane.phase === 'holding') {
-            const angle = elapsed / 4500 + plane.modelIndex * 2.1;
+            // Identical holding orbit for airplane1, airplane2 and airplane3.
+            const angle = elapsed / 4500;
             plane.mesh.position.set(Math.cos(angle) * 7, 24 + Math.sin(angle * 2) * 1.2, Math.sin(angle) * 7);
             plane.mesh.rotation.y = angle + Math.PI / 2;
             if (elapsed >= AIRPLANE_HOLD_MS) { plane.phase = 'returning'; plane.phaseStartedAt = now; }
