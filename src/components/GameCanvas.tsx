@@ -152,7 +152,6 @@ const CATEGORIES: Record<Category, ModelOption[]> = {
     { name: 'Road Lamp', path: '/models/roads/road_lamp.glb', price: 100 },
     { name: 'Stop Sign', path: '/models/roads/stop_sign.glb', price: 150 },
     { name: 'Clock Chock', path: '/models/roads/clock_chock.glb', price: 5000 },
-    { name: 'Air Runway', path: '/models/roads/runway.glb', price: 500000 },
     { name: 'Traffic Sign', path: '/models/roads/road_traffic_sign.glb', price: 500 }
   ],
   building: [
@@ -175,6 +174,7 @@ const CATEGORIES: Record<Category, ModelOption[]> = {
     { name: 'Park', path: '/models/market/park.glb', price: 550000 },
     { name: 'Residential Building', path: '/models/market/residential_building.glb', price: 8500000 },
     { name: 'Factory 1', path: '/models/market/factory1.glb', price: 750000 },
+    { name: 'Air Runway', path: '/models/market/runway.glb', price: 1000000 },
     { name: 'Power Plant', path: '/models/market/power_plant.glb', price: 1500000 }
   ],
   gov: [
